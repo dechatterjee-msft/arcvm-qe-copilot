@@ -939,6 +939,9 @@
         font-size: 0.84rem;
         line-height: 1.55;
         box-shadow: none;
+        white-space: pre-wrap;
+        word-break: break-all;
+        overflow-wrap: break-word;
       }
 
       .cli-editor:focus {
@@ -976,6 +979,203 @@
       .run-status.failed {
         color: #fca5a5;
         background: rgba(252, 165, 165, 0.05);
+      }
+
+      /* --- Flight Recorder --- */
+      .flight-recorder {
+        display: none;
+        border-top: 1px solid rgba(169, 199, 213, 0.10);
+        background: #12151a;
+      }
+      .flight-recorder.visible { display: block; }
+
+      .fr-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 14px 16px 10px;
+        cursor: pointer;
+        user-select: none;
+      }
+      .fr-header:hover { background: rgba(255,255,255,0.02); }
+
+      .fr-title {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 0.82rem;
+        font-weight: 600;
+        color: #d5e4e8;
+      }
+      .fr-title svg { opacity: 0.6; }
+      .fr-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 2px 8px;
+        border-radius: 6px;
+        font-size: 0.72rem;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+      }
+      .fr-badge.pass { background: rgba(74,222,128,0.12); color: #86efac; }
+      .fr-badge.fail { background: rgba(248,113,113,0.12); color: #fca5a5; }
+
+      .fr-elapsed {
+        font-size: 0.78rem;
+        color: var(--muted);
+        font-family: "SFMono-Regular","IBM Plex Mono","Menlo",monospace;
+      }
+      .fr-close {
+        background: none; border: none; color: var(--muted);
+        cursor: pointer; padding: 4px; border-radius: 6px; line-height: 1;
+      }
+      .fr-close:hover { color: #d5e4e8; background: rgba(255,255,255,0.06); }
+
+      .fr-body { padding: 0 16px 16px; min-width: 0; overflow: hidden; }
+
+      .fr-timeline {
+        position: relative;
+        padding-left: 24px;
+        min-width: 0;
+      }
+      .fr-timeline::before {
+        content: "";
+        position: absolute;
+        left: 7px;
+        top: 6px;
+        bottom: 6px;
+        width: 1px;
+        background: rgba(169,199,213,0.12);
+      }
+
+      .fr-action {
+        position: relative;
+        margin-bottom: 10px;
+      }
+      .fr-action:last-child { margin-bottom: 0; }
+
+      .fr-node {
+        position: absolute;
+        left: -24px;
+        top: 2px;
+        width: 15px;
+        height: 15px;
+        border-radius: 50%;
+        border: 2px solid;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .fr-node.pass { border-color: #4ade80; background: rgba(74,222,128,0.15); }
+      .fr-node.fail { border-color: #f87171; background: rgba(248,113,113,0.15); }
+      .fr-node.skip { border-color: #64748b; background: rgba(100,116,139,0.10); }
+      .fr-node-dot {
+        width: 5px; height: 5px; border-radius: 50%;
+      }
+      .fr-node.pass .fr-node-dot { background: #4ade80; }
+      .fr-node.fail .fr-node-dot { background: #f87171; }
+      .fr-node.skip .fr-node-dot { background: #64748b; }
+
+      .fr-action-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 6px 10px;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: background 120ms ease;
+      }
+      .fr-action-head:hover { background: rgba(255,255,255,0.03); }
+
+      .fr-action-name {
+        font-size: 0.82rem;
+        font-weight: 600;
+        color: #d5e4e8;
+      }
+
+      .fr-action-meta {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 0.76rem;
+        font-family: "SFMono-Regular","IBM Plex Mono","Menlo",monospace;
+        color: var(--muted);
+      }
+      .fr-action-meta .dur { color: #94a3b8; }
+
+      .fr-steps {
+        display: none;
+        margin: 4px 0 0 10px;
+        border-left: 1px dashed rgba(169,199,213,0.08);
+        padding-left: 12px;
+      }
+      .fr-action.expanded .fr-steps { display: block; }
+
+      .fr-step {
+        margin-bottom: 8px;
+        border-radius: 8px;
+        border: 1px solid rgba(169,199,213,0.08);
+        background: rgba(255,255,255,0.02);
+        overflow: hidden;
+        min-width: 0;
+      }
+      .fr-step:last-child { margin-bottom: 0; }
+
+      .fr-step-head {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        padding: 8px 10px;
+        font-size: 0.76rem;
+        font-family: "SFMono-Regular","IBM Plex Mono","Menlo",monospace;
+        color: #a5b4c0;
+        flex-wrap: wrap;
+      }
+      .fr-step-indicator {
+        width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
+        margin-top: 5px;
+      }
+      .fr-step-indicator.pass { background: #4ade80; }
+      .fr-step-indicator.fail { background: #f87171; }
+
+      .fr-step-cmd {
+        flex: 1;
+        min-width: 0;
+        white-space: pre-wrap;
+        word-break: break-all;
+        overflow-wrap: break-word;
+      }
+      .fr-step-dur {
+        flex-shrink: 0;
+        color: #64748b;
+      }
+
+      .fr-step-output {
+        display: none;
+        padding: 8px 10px;
+        border-top: 1px solid rgba(169,199,213,0.06);
+        font-size: 0.74rem;
+        font-family: "SFMono-Regular","IBM Plex Mono","Menlo",monospace;
+        line-height: 1.5;
+        white-space: pre-wrap;
+        word-break: break-all;
+        max-height: 200px;
+        overflow-y: auto;
+        color: #8aa3ae;
+      }
+      .fr-step-output.fail-output { color: #fca5a5; }
+      .fr-step.expanded .fr-step-output { display: block; }
+
+      .fr-summary {
+        margin-top: 12px;
+        padding: 10px 12px;
+        border-radius: 8px;
+        background: rgba(255,255,255,0.02);
+        border: 1px solid rgba(169,199,213,0.08);
+        font-size: 0.78rem;
+        color: var(--muted);
+        line-height: 1.5;
       }
 
       .run-details {
@@ -1212,6 +1412,122 @@
         color: #8aa3ae;
         margin-bottom: 2px;
       }
+
+      /* --- Azure target picker --- */
+      .azure-target-bar {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+        margin-bottom: 18px;
+      }
+      @media (max-width: 860px) {
+        .azure-target-bar { grid-template-columns: 1fr; }
+      }
+      .az-picker {
+        position: relative;
+      }
+      .az-picker-label {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 0.72rem;
+        color: #8aa3ae;
+        margin-bottom: 4px;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+      }
+      .az-picker-trigger {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        width: 100%;
+        min-height: 44px;
+        padding: 0 14px;
+        border-radius: 14px;
+        border: 1px solid rgba(169,199,213,0.18);
+        background: rgba(3,12,17,0.5);
+        color: var(--text);
+        font-size: 0.88rem;
+        cursor: pointer;
+        transition: border-color 180ms ease, box-shadow 180ms ease;
+        text-align: left;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .az-picker-trigger:hover { border-color: rgba(169,199,213,0.34); }
+      .az-picker-trigger:focus,
+      .az-picker-trigger.open {
+        border-color: rgba(110,231,210,0.44);
+        box-shadow: 0 0 0 4px rgba(110,231,210,0.1);
+        outline: none;
+      }
+      .az-picker-trigger .placeholder { color: var(--muted); }
+      .az-picker-trigger .chevron { flex-shrink: 0; color: var(--muted); transition: transform 180ms ease; }
+      .az-picker-trigger.open .chevron { transform: rotate(180deg); }
+      .az-picker-trigger:disabled { opacity: 0.45; cursor: not-allowed; }
+      .az-picker-trigger .spinner {
+        display: inline-block;
+        width: 14px;
+        height: 14px;
+        border: 2px solid rgba(169,199,213,0.2);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: spin 600ms linear infinite;
+        flex-shrink: 0;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      .az-dropdown {
+        position: absolute;
+        top: calc(100% + 4px);
+        left: 0; right: 0;
+        z-index: 100;
+        max-height: 260px;
+        border-radius: 14px;
+        border: 1px solid rgba(169,199,213,0.22);
+        background: rgba(8,19,26,0.96);
+        backdrop-filter: blur(18px);
+        box-shadow: 0 16px 48px rgba(0,0,0,0.4);
+        overflow: hidden;
+        display: none;
+      }
+      .az-dropdown.visible { display: flex; flex-direction: column; }
+      .az-dropdown-search {
+        margin: 8px 8px 4px;
+        padding: 9px 12px;
+        border-radius: 10px;
+        border: 1px solid rgba(169,199,213,0.14);
+        background: rgba(3,12,17,0.6);
+        color: var(--text);
+        font-size: 0.85rem;
+        outline: none;
+        width: calc(100% - 16px);
+      }
+      .az-dropdown-search::placeholder { color: var(--muted); }
+      .az-dropdown-search:focus {
+        border-color: rgba(110,231,210,0.36);
+      }
+      .az-dropdown-list {
+        overflow-y: auto;
+        flex: 1;
+        padding: 4px 0;
+      }
+      .az-dropdown-item {
+        padding: 9px 14px;
+        font-size: 0.85rem;
+        cursor: pointer;
+        color: #c5d8de;
+        transition: background 120ms ease;
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+      }
+      .az-dropdown-item:hover,
+      .az-dropdown-item.highlighted { background: rgba(110,231,210,0.08); color: var(--text); }
+      .az-dropdown-item.selected { color: var(--accent); }
+      .az-dropdown-item .item-sub { font-size: 0.74rem; color: var(--muted); }
+      .az-dropdown-empty { padding: 14px; text-align: center; color: var(--muted); font-size: 0.82rem; }
     </style>
   </head>
   <body>
@@ -1223,6 +1539,34 @@
           <span class="tagline">AI-driven test case generation for Azure Local resources</span>
         </div>
       </header>
+
+      <!-- Azure target selector -->
+      <div class="azure-target-bar">
+        <div class="az-picker" id="subPicker">
+          <div class="az-picker-label"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 002 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0022 16z"/></svg> Subscription</div>
+          <button type="button" class="az-picker-trigger" id="subTrigger" aria-haspopup="listbox"><span class="placeholder">Select subscription</span><svg class="chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
+          <div class="az-dropdown" id="subDropdown">
+            <input class="az-dropdown-search" id="subSearch" type="text" placeholder="Search subscriptions..." autocomplete="off" />
+            <div class="az-dropdown-list" id="subList" role="listbox"></div>
+          </div>
+        </div>
+        <div class="az-picker" id="rgPicker">
+          <div class="az-picker-label"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h7v7H3z"/><path d="M14 3h7v7h-7z"/><path d="M3 14h7v7H3z"/><path d="M14 14h7v7h-7z"/></svg> Resource Group</div>
+          <button type="button" class="az-picker-trigger" id="rgTrigger" aria-haspopup="listbox"><span class="placeholder">Select resource group</span><svg class="chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
+          <div class="az-dropdown" id="rgDropdown">
+            <input class="az-dropdown-search" id="rgSearch" type="text" placeholder="Search resource groups..." autocomplete="off" />
+            <div class="az-dropdown-list" id="rgList" role="listbox"></div>
+          </div>
+        </div>
+        <div class="az-picker" id="clPicker">
+          <div class="az-picker-label"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg> Custom Location</div>
+          <button type="button" class="az-picker-trigger" id="clTrigger" aria-haspopup="listbox"><span class="placeholder">Select custom location</span><svg class="chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
+          <div class="az-dropdown" id="clDropdown">
+            <input class="az-dropdown-search" id="clSearch" type="text" placeholder="Search custom locations..." autocomplete="off" />
+            <div class="az-dropdown-list" id="clList" role="listbox"></div>
+          </div>
+        </div>
+      </div>
 
       <div id="splitLayout" class="split-layout">
       <section id="planner" class="surface composer">

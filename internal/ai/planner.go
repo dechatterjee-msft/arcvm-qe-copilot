@@ -16,11 +16,11 @@ import (
 )
 
 type Planner struct {
-	client    *Client
-	cfg       Config
-	logger    *log.Logger
-	planLog   *log.Logger
-	store     *EmbeddingStore
+	client  *Client
+	cfg     Config
+	logger  *log.Logger
+	planLog *log.Logger
+	store   *EmbeddingStore
 }
 
 type llmPlanEnvelope struct {

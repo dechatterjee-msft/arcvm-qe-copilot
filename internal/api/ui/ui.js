@@ -38,6 +38,7 @@ const paginationEl = document.getElementById("pagination");
 const acceptedCommands = new Map();
 const initialCommands = new Map();
 const runningJobs = new Map();
+const completedJobData = new Map(); // caseId → { jobId, job }
 
 const PAGE_SIZE = 4;
 let allCases = [];
@@ -275,6 +276,305 @@ function buildDefaultLayers() {
 // Keep these as live references so generate() picks up the current tab
 let defaultBaseline = buildDefaultBaseline();
 let defaultLayers = buildDefaultLayers();
+
+// ─── Azure target picker (cascade dropdowns with search) ──────────────────
+
+const azPicker = {
+  sub: {
+    trigger: document.getElementById("subTrigger"),
+    dropdown: document.getElementById("subDropdown"),
+    search: document.getElementById("subSearch"),
+    list: document.getElementById("subList"),
+    items: [],
+    selected: null,
+    highlighted: -1,
+    emptyMsg: 'No subscriptions found — ensure <code style="color:#6ee7d2">az login</code> is run on the server',
+  },
+  rg: {
+    trigger: document.getElementById("rgTrigger"),
+    dropdown: document.getElementById("rgDropdown"),
+    search: document.getElementById("rgSearch"),
+    list: document.getElementById("rgList"),
+    items: [],
+    selected: null,
+    highlighted: -1,
+    emptyMsg: "No resource groups found",
+  },
+  cl: {
+    trigger: document.getElementById("clTrigger"),
+    dropdown: document.getElementById("clDropdown"),
+    search: document.getElementById("clSearch"),
+    list: document.getElementById("clList"),
+    items: [],
+    selected: null,
+    highlighted: -1,
+    emptyMsg: "No custom locations found",
+  },
+};
+
+function azSetTriggerText(picker, text, isPlaceholder) {
+  const chevron = picker.trigger.querySelector(".chevron");
+  const oldSpinner = picker.trigger.querySelector(".spinner");
+  if (oldSpinner) oldSpinner.remove();
+  picker.trigger.innerHTML = "";
+  const span = document.createElement("span");
+  if (isPlaceholder) span.className = "placeholder";
+  span.textContent = text;
+  picker.trigger.appendChild(span);
+  if (chevron) picker.trigger.appendChild(chevron);
+}
+
+function azSetLoading(picker, loading) {
+  if (loading) {
+    picker.trigger.disabled = true;
+    const chevron = picker.trigger.querySelector(".chevron");
+    const spin = document.createElement("span");
+    spin.className = "spinner";
+    if (chevron) picker.trigger.insertBefore(spin, chevron);
+    else picker.trigger.appendChild(spin);
+  } else {
+    picker.trigger.disabled = false;
+    const spin = picker.trigger.querySelector(".spinner");
+    if (spin) spin.remove();
+  }
+}
+
+function azRenderList(picker, filterText) {
+  const q = (filterText || "").toLowerCase();
+  const filtered = picker.items.filter((item) => {
+    const haystack = (item.label + " " + (item.sub || "")).toLowerCase();
+    return !q || haystack.includes(q);
+  });
+  picker.list.innerHTML = "";
+  picker.highlighted = -1;
+
+  // If search has text but no items match, offer to use the typed value directly
+  if (filtered.length === 0) {
+    if (q && picker.items.length === 0) {
+      // No items at all — let user type a value manually
+      const el = document.createElement("div");
+      el.className = "az-dropdown-item";
+      el.innerHTML = `<span>Use "<strong>${escapeHtml(q)}</strong>"</span><span class="item-sub">Enter a value manually</span>`;
+      el.addEventListener("click", () => {
+        azSelect(picker, { value: q, label: q, sub: "manual" });
+      });
+      picker.list.appendChild(el);
+    } else if (q) {
+      picker.list.innerHTML = '<div class="az-dropdown-empty">No matches</div>';
+    } else {
+      picker.list.innerHTML = `<div class="az-dropdown-empty">${picker.emptyMsg}</div>`;
+    }
+    return;
+  }
+  filtered.forEach((item, idx) => {
+    const el = document.createElement("div");
+    el.className = "az-dropdown-item" + (picker.selected && picker.selected.value === item.value ? " selected" : "");
+    el.setAttribute("role", "option");
+    el.dataset.index = idx;
+    el.dataset.value = item.value;
+    el.innerHTML = `<span>${escapeHtml(item.label)}</span>` + (item.sub ? `<span class="item-sub">${escapeHtml(item.sub)}</span>` : "");
+    el.addEventListener("click", () => azSelect(picker, item));
+    el.addEventListener("mouseenter", () => {
+      picker.highlighted = idx;
+      azHighlight(picker, idx);
+    });
+    picker.list.appendChild(el);
+  });
+}
+
+function azHighlight(picker, idx) {
+  picker.list.querySelectorAll(".az-dropdown-item").forEach((el, i) => {
+    el.classList.toggle("highlighted", i === idx);
+  });
+}
+
+function azOpen(picker) {
+  // close others
+  for (const p of Object.values(azPicker)) {
+    if (p !== picker) azClose(p);
+  }
+  picker.dropdown.classList.add("visible");
+  picker.trigger.classList.add("open");
+  picker.search.value = "";
+  azRenderList(picker, "");
+  setTimeout(() => picker.search.focus(), 0);
+}
+
+function azClose(picker) {
+  picker.dropdown.classList.remove("visible");
+  picker.trigger.classList.remove("open");
+  picker.highlighted = -1;
+}
+
+function azToggle(picker) {
+  if (picker.dropdown.classList.contains("visible")) azClose(picker);
+  else azOpen(picker);
+}
+
+function azSelect(picker, item) {
+  picker.selected = item;
+  azSetTriggerText(picker, item.label, false);
+  azClose(picker);
+
+  if (picker === azPicker.sub) {
+    baseEnvelope.subscriptionId = item.value;
+    // reset downstream
+    azPicker.rg.selected = null;
+    azPicker.rg.items = [];
+    azSetTriggerText(azPicker.rg, "Select resource group", true);
+    azPicker.rg.trigger.disabled = false;
+    azPicker.cl.selected = null;
+    azPicker.cl.items = [];
+    azSetTriggerText(azPicker.cl, "Select custom location", true);
+    azPicker.cl.trigger.disabled = true;
+    baseEnvelope.resourceGroup = "";
+    baseEnvelope.customLocationId = "";
+    baseEnvelope.location = "";
+    fetchResourceGroups(item.value);
+  } else if (picker === azPicker.rg) {
+    baseEnvelope.resourceGroup = item.value;
+    baseEnvelope.location = item.location || baseEnvelope.location;
+    // reset custom location
+    azPicker.cl.selected = null;
+    azPicker.cl.items = [];
+    azSetTriggerText(azPicker.cl, "Select custom location", true);
+    azPicker.cl.trigger.disabled = false;
+    baseEnvelope.customLocationId = "";
+    fetchCustomLocations(baseEnvelope.subscriptionId, item.value);
+  } else if (picker === azPicker.cl) {
+    baseEnvelope.customLocationId = item.value;
+    baseEnvelope.location = item.location || baseEnvelope.location;
+  }
+  // Rebuild baseline for the active tab
+  defaultBaseline = buildDefaultBaseline();
+}
+
+function azSearchHandler(picker) {
+  picker.search.addEventListener("input", () => {
+    azRenderList(picker, picker.search.value);
+  });
+  picker.search.addEventListener("keydown", (e) => {
+    const listItems = picker.list.querySelectorAll(".az-dropdown-item");
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      picker.highlighted = Math.min(picker.highlighted + 1, listItems.length - 1);
+      azHighlight(picker, picker.highlighted);
+      listItems[picker.highlighted]?.scrollIntoView({ block: "nearest" });
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      picker.highlighted = Math.max(picker.highlighted - 1, 0);
+      azHighlight(picker, picker.highlighted);
+      listItems[picker.highlighted]?.scrollIntoView({ block: "nearest" });
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (picker.highlighted >= 0 && listItems[picker.highlighted]) {
+        const val = listItems[picker.highlighted].dataset.value;
+        const match = picker.items.find((i) => i.value === val);
+        if (match) {
+          azSelect(picker, match);
+        } else {
+          // manual entry
+          const typed = picker.search.value.trim();
+          if (typed) azSelect(picker, { value: typed, label: typed, sub: "manual" });
+        }
+      } else {
+        // No item highlighted — use typed text as manual entry
+        const typed = picker.search.value.trim();
+        if (typed) azSelect(picker, { value: typed, label: typed, sub: "manual" });
+      }
+    } else if (e.key === "Escape") {
+      azClose(picker);
+      picker.trigger.focus();
+    }
+  });
+}
+
+// Wire trigger clicks
+for (const [, picker] of Object.entries(azPicker)) {
+  picker.trigger.addEventListener("click", () => {
+    if (!picker.trigger.disabled) azToggle(picker);
+  });
+  azSearchHandler(picker);
+}
+
+// Close dropdowns on outside click
+document.addEventListener("click", (e) => {
+  for (const picker of Object.values(azPicker)) {
+    if (!picker.trigger.contains(e.target) && !picker.dropdown.contains(e.target)) {
+      azClose(picker);
+    }
+  }
+});
+
+async function fetchSubscriptions() {
+  azSetLoading(azPicker.sub, true);
+  azSetTriggerText(azPicker.sub, "Loading...", true);
+  try {
+    const res = await fetch("/api/v1/azure/subscriptions");
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+    azPicker.sub.items = (data || [])
+      .filter((s) => s.state === "Enabled")
+      .map((s) => ({ value: s.id, label: s.name, sub: s.id }));
+    if (azPicker.sub.items.length > 0) {
+      azSetTriggerText(azPicker.sub, `Select subscription (${azPicker.sub.items.length})`, true);
+    } else {
+      azSetTriggerText(azPicker.sub, "No subscriptions — type to enter manually", true);
+    }
+  } catch (err) {
+    azPicker.sub.items = [];
+    azSetTriggerText(azPicker.sub, "Could not load — click to enter manually", true);
+    console.error("fetchSubscriptions:", err);
+  }
+  azSetLoading(azPicker.sub, false);
+}
+
+async function fetchResourceGroups(subscriptionId) {
+  azSetLoading(azPicker.rg, true);
+  azSetTriggerText(azPicker.rg, "Loading...", true);
+  try {
+    const res = await fetch(`/api/v1/azure/resource-groups?subscriptionId=${encodeURIComponent(subscriptionId)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+    azPicker.rg.items = (data || []).map((g) => ({ value: g.name, label: g.name, sub: g.location, location: g.location }));
+    if (azPicker.rg.items.length > 0) {
+      azSetTriggerText(azPicker.rg, `Select resource group (${azPicker.rg.items.length})`, true);
+    } else {
+      azSetTriggerText(azPicker.rg, "No resource groups — type to enter manually", true);
+    }
+  } catch (err) {
+    azPicker.rg.items = [];
+    azSetTriggerText(azPicker.rg, "Could not load — click to enter manually", true);
+    console.error("fetchResourceGroups:", err);
+  }
+  azSetLoading(azPicker.rg, false);
+}
+
+async function fetchCustomLocations(subscriptionId, resourceGroup) {
+  azSetLoading(azPicker.cl, true);
+  azSetTriggerText(azPicker.cl, "Loading...", true);
+  try {
+    const res = await fetch(`/api/v1/azure/custom-locations?subscriptionId=${encodeURIComponent(subscriptionId)}&resourceGroup=${encodeURIComponent(resourceGroup)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+    azPicker.cl.items = (data || []).map((c) => ({ value: c.id, label: c.name, sub: c.location, location: c.location }));
+    if (azPicker.cl.items.length > 0) {
+      azSetTriggerText(azPicker.cl, `Select custom location (${azPicker.cl.items.length})`, true);
+    } else {
+      azSetTriggerText(azPicker.cl, "No custom locations — type to enter manually", true);
+    }
+  } catch (err) {
+    azPicker.cl.items = [];
+    azSetTriggerText(azPicker.cl, "Could not load — click to enter manually", true);
+    console.error("fetchCustomLocations:", err);
+  }
+  azSetLoading(azPicker.cl, false);
+}
+
+// Load subscriptions on page load
+fetchSubscriptions();
+
+// ──────────────────────────────────────────────────────────────────────
 
 const uiState = {
   totalCases: 0,
@@ -576,6 +876,7 @@ function renderPage(page) {
         </div>
         <textarea class="cli-editor" data-role="cli-editor">${escapeHtml(editedCommands)}</textarea>
         <div class="run-status${runningJobs.has(caseId) ? " visible running" : ""}" data-role="run-status">${runningJobs.has(caseId) ? "Job submitted — polling for status..." : ""}</div>
+        <div class="flight-recorder" data-role="flight-recorder"></div>
       </section>
     `;
 
@@ -641,6 +942,16 @@ function renderPage(page) {
       runBtn.addEventListener("click", () => {
         runTestCase(caseId, runRequest, runBtn, runStatusEl);
       });
+    }
+
+    // Restore flight recorder for previously completed jobs
+    const completed = completedJobData.get(caseId);
+    if (completed && runStatusEl) {
+      const st = (completed.job?.status || "").toLowerCase();
+      const isFail = st === "failed" || st === "error";
+      runStatusEl.className = `run-status visible ${isFail ? "failed" : "succeeded"}`;
+      runStatusEl.textContent = `Job ${completed.jobId}: ${isFail ? "failed" : "succeeded"}${isFail && completed.job?.error ? ` — ${completed.job.error}` : ""}`;
+      renderFlightRecorder(runStatusEl, completed.jobId, completed.job);
     }
   });
 
@@ -716,7 +1027,7 @@ function buildRelevantAzCliCommands(runRequest) {
     const name = sp.name || "<storage-path-name>";
     const create = [
       "az stack-hci storagepath create",
-      `  -g ${shellQuote(rg)}`,
+      `  --resource-group ${shellQuote(rg)}`,
       `  --custom-location ${shellQuote(customLocation)}`,
       `  --name ${shellQuote(name)}`,
       `  --location ${shellQuote(location)}`,
@@ -725,8 +1036,8 @@ function buildRelevantAzCliCommands(runRequest) {
     cmdGroups.push({
       label: "Storage Path",
       create,
-      show: `az stack-hci storagepath show -g ${shellQuote(rg)} -n ${shellQuote(name)}`,
-      del: `az stack-hci storagepath delete -g ${shellQuote(rg)} -n ${shellQuote(name)} --yes`,
+      show: `az stack-hci storagepath show --resource-group ${shellQuote(rg)} --name ${shellQuote(name)}`,
+      del: `az stack-hci storagepath delete --resource-group ${shellQuote(rg)} --name ${shellQuote(name)} --yes`,
     });
   }
 
@@ -736,7 +1047,7 @@ function buildRelevantAzCliCommands(runRequest) {
     const name = sc.name || "<storage-container-name>";
     const create = [
       "az stack-hci storagepath create",
-      `  -g ${shellQuote(rg)}`,
+      `  --resource-group ${shellQuote(rg)}`,
       `  --custom-location ${shellQuote(customLocation)}`,
       `  --name ${shellQuote(name)}`,
       `  --location ${shellQuote(location)}`,
@@ -745,8 +1056,8 @@ function buildRelevantAzCliCommands(runRequest) {
     cmdGroups.push({
       label: "Storage Container",
       create,
-      show: `az stack-hci storagepath show -g ${shellQuote(rg)} -n ${shellQuote(name)}`,
-      del: `az stack-hci storagepath delete -g ${shellQuote(rg)} -n ${shellQuote(name)} --yes`,
+      show: `az stack-hci storagepath show --resource-group ${shellQuote(rg)} --name ${shellQuote(name)}`,
+      del: `az stack-hci storagepath delete --resource-group ${shellQuote(rg)} --name ${shellQuote(name)} --yes`,
     });
   }
 
@@ -756,7 +1067,7 @@ function buildRelevantAzCliCommands(runRequest) {
     const name = gi.name || "<gallery-image-name>";
     const create = [
       "az stack-hci-vm image create",
-      `  -g ${shellQuote(rg)}`,
+      `  --resource-group ${shellQuote(rg)}`,
       `  --custom-location ${shellQuote(customLocation)}`,
       `  --name ${shellQuote(name)}`,
       `  --location ${shellQuote(location)}`,
@@ -767,8 +1078,8 @@ function buildRelevantAzCliCommands(runRequest) {
     cmdGroups.push({
       label: "Gallery Image",
       create,
-      show: `az stack-hci-vm image show -g ${shellQuote(rg)} -n ${shellQuote(name)}`,
-      del: `az stack-hci-vm image delete -g ${shellQuote(rg)} -n ${shellQuote(name)} --yes`,
+      show: `az stack-hci-vm image show --resource-group ${shellQuote(rg)} --name ${shellQuote(name)}`,
+      del: `az stack-hci-vm image delete --resource-group ${shellQuote(rg)} --name ${shellQuote(name)} --yes`,
     });
   }
 
@@ -778,13 +1089,14 @@ function buildRelevantAzCliCommands(runRequest) {
     const name = lnet.name || "<logical-network-name>";
     const create = [
       "az stack-hci-vm network lnet create",
-      `  -g ${shellQuote(rg)}`,
+      `  --resource-group ${shellQuote(rg)}`,
       `  --custom-location ${shellQuote(customLocation)}`,
       `  --name ${shellQuote(name)}`,
       `  --location ${shellQuote(location)}`,
     ];
     if (lnet.addressPrefix) create.push(`  --address-prefixes ${shellQuote(lnet.addressPrefix)}`);
     if (lnet.ipAllocationMethod) create.push(`  --ip-allocation-method ${shellQuote(lnet.ipAllocationMethod)}`);
+    if (lnet.ipPoolType) create.push(`  --ip-pool-type ${shellQuote(lnet.ipPoolType)}`);
     if (lnet.ipPoolStart) create.push(`  --ip-pool-start ${shellQuote(lnet.ipPoolStart)}`);
     if (lnet.ipPoolEnd) create.push(`  --ip-pool-end ${shellQuote(lnet.ipPoolEnd)}`);
     if (lnet.vmSwitchName) create.push(`  --vm-switch-name ${shellQuote(lnet.vmSwitchName)}`);
@@ -794,8 +1106,8 @@ function buildRelevantAzCliCommands(runRequest) {
     cmdGroups.push({
       label: "Logical Network",
       create,
-      show: `az stack-hci-vm network lnet show -g ${shellQuote(rg)} -n ${shellQuote(name)}`,
-      del: `az stack-hci-vm network lnet delete -g ${shellQuote(rg)} -n ${shellQuote(name)} --yes`,
+      show: `az stack-hci-vm network lnet show --resource-group ${shellQuote(rg)} --name ${shellQuote(name)}`,
+      del: `az stack-hci-vm network lnet delete --resource-group ${shellQuote(rg)} --name ${shellQuote(name)} --yes`,
     });
   }
 
@@ -805,7 +1117,7 @@ function buildRelevantAzCliCommands(runRequest) {
     const name = nsg.name || "<nsg-name>";
     const create = [
       "az stack-hci-vm network nsg create",
-      `  -g ${shellQuote(rg)}`,
+      `  --resource-group ${shellQuote(rg)}`,
       `  --custom-location ${shellQuote(customLocation)}`,
       `  --name ${shellQuote(name)}`,
       `  --location ${shellQuote(location)}`,
@@ -817,7 +1129,7 @@ function buildRelevantAzCliCommands(runRequest) {
         const rn = rule.name || "<rule-name>";
         const rc = [
           `az stack-hci-vm network nsg rule create`,
-          `  -g ${shellQuote(rg)}`,
+          `  --resource-group ${shellQuote(rg)}`,
           `  --nsg-name ${shellQuote(name)}`,
           `  --name ${shellQuote(rn)}`,
         ];
@@ -832,8 +1144,8 @@ function buildRelevantAzCliCommands(runRequest) {
     cmdGroups.push({
       label: "Network Security Group",
       create: [...create, ...ruleLines],
-      show: `az stack-hci-vm network nsg show -g ${shellQuote(rg)} -n ${shellQuote(name)}`,
-      del: `az stack-hci-vm network nsg delete -g ${shellQuote(rg)} -n ${shellQuote(name)} --yes`,
+      show: `az stack-hci-vm network nsg show --resource-group ${shellQuote(rg)} --name ${shellQuote(name)}`,
+      del: `az stack-hci-vm network nsg delete --resource-group ${shellQuote(rg)} --name ${shellQuote(name)} --yes`,
     });
   }
 
@@ -843,7 +1155,7 @@ function buildRelevantAzCliCommands(runRequest) {
     const name = nic.name || "<nic-name>";
     const create = [
       "az stack-hci-vm network nic create",
-      `  -g ${shellQuote(rg)}`,
+      `  --resource-group ${shellQuote(rg)}`,
       `  --custom-location ${shellQuote(customLocation)}`,
       `  --name ${shellQuote(name)}`,
       `  --location ${shellQuote(location)}`,
@@ -853,8 +1165,8 @@ function buildRelevantAzCliCommands(runRequest) {
     cmdGroups.push({
       label: "Network Interface",
       create,
-      show: `az stack-hci-vm network nic show -g ${shellQuote(rg)} -n ${shellQuote(name)}`,
-      del: `az stack-hci-vm network nic delete -g ${shellQuote(rg)} -n ${shellQuote(name)} --yes`,
+      show: `az stack-hci-vm network nic show --resource-group ${shellQuote(rg)} --name ${shellQuote(name)}`,
+      del: `az stack-hci-vm network nic delete --resource-group ${shellQuote(rg)} --name ${shellQuote(name)} --yes`,
     });
   }
 
@@ -864,7 +1176,7 @@ function buildRelevantAzCliCommands(runRequest) {
     const name = vhd.name || "<vhd-name>";
     const create = [
       "az stack-hci-vm disk create",
-      `  -g ${shellQuote(rg)}`,
+      `  --resource-group ${shellQuote(rg)}`,
       `  --custom-location ${shellQuote(customLocation)}`,
       `  --name ${shellQuote(name)}`,
       `  --location ${shellQuote(location)}`,
@@ -875,8 +1187,8 @@ function buildRelevantAzCliCommands(runRequest) {
     cmdGroups.push({
       label: "Virtual Hard Disk",
       create,
-      show: `az stack-hci-vm disk show -g ${shellQuote(rg)} -n ${shellQuote(name)}`,
-      del: `az stack-hci-vm disk delete -g ${shellQuote(rg)} -n ${shellQuote(name)} --yes`,
+      show: `az stack-hci-vm disk show --resource-group ${shellQuote(rg)} --name ${shellQuote(name)}`,
+      del: `az stack-hci-vm disk delete --resource-group ${shellQuote(rg)} --name ${shellQuote(name)} --yes`,
     });
   }
 
@@ -886,7 +1198,7 @@ function buildRelevantAzCliCommands(runRequest) {
     const name = vm.name || "<vm-name>";
     const create = [
       "az stack-hci-vm create",
-      `  -g ${shellQuote(rg)}`,
+      `  --resource-group ${shellQuote(rg)}`,
       `  --custom-location ${shellQuote(customLocation)}`,
       `  --name ${shellQuote(name)}`,
       `  --location ${shellQuote(location)}`,
@@ -904,8 +1216,8 @@ function buildRelevantAzCliCommands(runRequest) {
     cmdGroups.push({
       label: "Virtual Machine",
       create,
-      show: `az stack-hci-vm show -g ${shellQuote(rg)} -n ${shellQuote(name)}`,
-      del: `az stack-hci-vm delete -g ${shellQuote(rg)} -n ${shellQuote(name)} --yes`,
+      show: `az stack-hci-vm show --resource-group ${shellQuote(rg)} --name ${shellQuote(name)}`,
+      del: `az stack-hci-vm delete --resource-group ${shellQuote(rg)} --name ${shellQuote(name)} --yes`,
     });
   }
 
@@ -920,27 +1232,27 @@ function buildRelevantAzCliCommands(runRequest) {
     if (wantProvision) {
       lines.push("# --- Provision (dependency order) ---");
       for (const g of cmdGroups) {
-        lines.push(`# ${g.label}`, ...g.create, "");
+        lines.push(`# ${g.label}`, joinCmd(g.create), "");
       }
     }
     if (wantShow) {
       lines.push("# --- Verify ---");
       for (const g of cmdGroups) {
-        lines.push(g.show, "");
+        lines.push(splitCmd(g.show), "");
       }
     }
     if (wantCleanup) {
       lines.push("# --- Cleanup (reverse dependency order) ---");
       for (const g of [...cmdGroups].reverse()) {
-        lines.push(g.del, "");
+        lines.push(splitCmd(g.del), "");
       }
     }
   } else if (cmdGroups.length === 1) {
     // Single resource: compact create → show → delete
     const g = cmdGroups[0];
-    if (wantProvision) lines.push(...g.create, "");
-    if (wantShow) lines.push(g.show, "");
-    if (wantCleanup) lines.push(g.del, "");
+    if (wantProvision) lines.push(joinCmd(g.create), "");
+    if (wantShow) lines.push(splitCmd(g.show), "");
+    if (wantCleanup) lines.push(splitCmd(g.del), "");
   }
 
   // Fallback: generic resource JSON dump
@@ -954,6 +1266,49 @@ function buildRelevantAzCliCommands(runRequest) {
 
 function shellQuote(value) {
   return `'${String(value ?? "").replace(/'/g, `'\\''`)}'`;
+}
+
+/** Join a create-command array into a single copy-pasteable shell command with \ continuations. */
+function joinCmd(parts) {
+  if (!Array.isArray(parts) || parts.length === 0) return "";
+  // Filter out empty strings that are used as spacers between sub-commands (e.g. NSG rule blocks)
+  const blocks = [];
+  let current = [];
+  for (const line of parts) {
+    if (line === "") {
+      if (current.length > 0) { blocks.push(current); current = []; }
+    } else {
+      current.push(line);
+    }
+  }
+  if (current.length > 0) blocks.push(current);
+
+  return blocks.map(block =>
+    block.length === 1 ? block[0] : block.slice(0, -1).map(l => l + " \\").join("\n") + "\n" + block[block.length - 1]
+  ).join("\n\n");
+}
+
+/** Split a one-liner az command into multi-line \ continuation format. */
+function splitCmd(cmd) {
+  if (!cmd) return "";
+  const tokens = cmd.match(/(?:--\S+\s+'[^']*'|--\S+\s+\S+|-\S+\s+'[^']*'|-\S+\s+\S+|\S+)/g);
+  if (!tokens || tokens.length <= 1) return cmd;
+  // First tokens form the base command (e.g. "az stack-hci-vm network lnet show")
+  const parts = [];
+  let base = [];
+  for (const t of tokens) {
+    if (t.startsWith("-")) {
+      parts.push(t);
+    } else if (parts.length === 0) {
+      base.push(t);
+    } else {
+      // Attach to last part (shouldn't normally happen)
+      parts[parts.length - 1] += " " + t;
+    }
+  }
+  if (parts.length === 0) return cmd;
+  const lines = [base.join(" "), ...parts.map(p => "  " + p)];
+  return lines.slice(0, -1).map(l => l + " \\").join("\n") + "\n" + lines[lines.length - 1];
 }
 
 /** Extract display-worthy pills from any resource type in a runRequest. */
@@ -1231,7 +1586,8 @@ async function runTestCase(caseId, runRequest, runBtn, runStatusEl) {
 }
 
 function pollJobStatus(caseId, jobId, runBtn, runStatusEl) {
-  const interval = setInterval(async () => {
+  let interval;
+  async function tick() {
     try {
       const response = await fetch(`/api/v1/jobs/${encodeURIComponent(jobId)}`);
       if (!response.ok) {
@@ -1241,7 +1597,7 @@ function pollJobStatus(caseId, jobId, runBtn, runStatusEl) {
       const job = await response.json();
       const status = (job?.status || "").toLowerCase();
 
-      if (runStatusEl) {
+      if (runStatusEl?.isConnected) {
         const elapsed = job?.startedAt
           ? `${((Date.now() - new Date(job.startedAt).getTime()) / 1000).toFixed(0)}s`
           : "";
@@ -1251,30 +1607,216 @@ function pollJobStatus(caseId, jobId, runBtn, runStatusEl) {
       if (status === "succeeded" || status === "completed") {
         clearInterval(interval);
         runningJobs.delete(caseId);
-        runBtn.disabled = false;
-        runBtn.classList.remove("running");
-        runBtn.textContent = "Run";
-        if (runStatusEl) {
+        completedJobData.set(caseId, { jobId, job });
+        if (runBtn?.isConnected) { runBtn.disabled = false; runBtn.classList.remove("running"); runBtn.textContent = "Run"; }
+        if (runStatusEl?.isConnected) {
           runStatusEl.className = "run-status visible succeeded";
           runStatusEl.textContent = `Job ${jobId}: succeeded`;
+          renderFlightRecorder(runStatusEl, jobId, job);
         }
         setStatus(`${caseId} completed successfully.`, "success");
       } else if (status === "failed" || status === "error") {
         clearInterval(interval);
         runningJobs.delete(caseId);
-        runBtn.disabled = false;
-        runBtn.classList.remove("running");
-        runBtn.textContent = "Run";
-        if (runStatusEl) {
+        completedJobData.set(caseId, { jobId, job });
+        if (runBtn?.isConnected) { runBtn.disabled = false; runBtn.classList.remove("running"); runBtn.textContent = "Run"; }
+        if (runStatusEl?.isConnected) {
           runStatusEl.className = "run-status visible failed";
           runStatusEl.textContent = `Job ${jobId}: failed${job?.error ? ` — ${job.error}` : ""}`;
+          renderFlightRecorder(runStatusEl, jobId, job);
         }
         setStatus(`${caseId} failed.${job?.error ? ` ${job.error}` : ""}`, "error");
       }
     } catch (_err) {
       // Polling errors are transient — keep trying.
     }
-  }, 3000);
+  }
+  tick();
+  interval = setInterval(tick, 800);
+}
+
+// --- Flight Recorder ---
+function renderFlightRecorder(runStatusEl, jobId, job) {
+  if (!runStatusEl) return;
+  const card = runStatusEl.closest(".result");
+  if (!card) return;
+  const container = card.querySelector('[data-role="flight-recorder"]');
+  if (!container) return;
+
+  const result = job?.result;
+  // Support both longevity (iterations) and provision (prereqSteps) results
+  const iterations = Array.isArray(result?.iterations) ? result.iterations : [];
+  const prereqSteps = Array.isArray(result?.prereqSteps) ? result.prereqSteps : [];
+  const jobStatus = (job?.status || "").toLowerCase();
+  const jobSuccess = jobStatus === "succeeded" || jobStatus === "completed";
+
+  // Collect all actions across iterations (most jobs have 1 iteration)
+  const allActions = [];
+  for (const iter of iterations) {
+    const acts = Array.isArray(iter.actions) ? iter.actions : [];
+    for (const a of acts) {
+      allActions.push({ ...a, iteration: iter.index });
+    }
+  }
+
+  // For provision results with prereqSteps but no iterations, synthesize a prereqs action
+  if (allActions.length === 0 && prereqSteps.length > 0) {
+    allActions.push({
+      name: "prereqs",
+      success: jobSuccess,
+      error: job?.error || "",
+      steps: prereqSteps,
+      startedAt: job?.startedAt,
+      finishedAt: job?.finishedAt,
+    });
+  }
+
+  // If still no data and job has an error, synthesize a minimal action
+  if (allActions.length === 0 && job?.error) {
+    allActions.push({
+      name: "setup",
+      success: false,
+      error: job.error,
+      steps: [],
+      startedAt: job?.startedAt,
+      finishedAt: job?.finishedAt,
+    });
+  }
+
+  if (allActions.length === 0) {
+    container.innerHTML = "";
+    container.classList.remove("visible");
+    return;
+  }
+
+  // Calculate total elapsed
+  let totalMs = 0;
+  if (job?.startedAt && job?.finishedAt) {
+    totalMs = new Date(job.finishedAt).getTime() - new Date(job.startedAt).getTime();
+  }
+  const totalSec = (totalMs / 1000).toFixed(1);
+
+  const passCount = allActions.filter(a => a.success).length;
+  const failCount = allActions.filter(a => !a.success).length;
+  const totalActions = allActions.length;
+
+  // Planned actions from the job summary
+  const planned = Array.isArray(job?.summary?.longevityActions) ? job.summary.longevityActions : [];
+  const executedNames = new Set(allActions.map(a => (a.name || "").toLowerCase()));
+  const skippedActions = planned.filter(a => !executedNames.has(a.toLowerCase()));
+
+  // Build timeline HTML
+  const actionsHtml = allActions.map((action, idx) => {
+    const nodeClass = action.success ? "pass" : "fail";
+    const steps = Array.isArray(action.steps) ? action.steps : [];
+    const actionMs = action.startedAt && action.finishedAt
+      ? new Date(action.finishedAt).getTime() - new Date(action.startedAt).getTime()
+      : steps.reduce((s, st) => s + (st.durationMs || 0), 0);
+    const actionSec = (actionMs / 1000).toFixed(1);
+    const stepCountLabel = steps.length > 0 ? `${steps.length} cmd${steps.length > 1 ? "s" : ""}` : "";
+
+    const stepsHtml = steps.map((step, si) => {
+      const sClass = step.success ? "pass" : "fail";
+      const durLabel = step.durationMs != null ? `${(step.durationMs / 1000).toFixed(1)}s` : "";
+      const cmd = escapeHtml(step.command || "");
+      const output = step.output ? escapeHtml(step.output) : "";
+      return `<div class="fr-step" data-step-idx="${si}">
+        <div class="fr-step-head">
+          <span class="fr-step-indicator ${sClass}"></span>
+          <span class="fr-step-cmd" title="${cmd}">${cmd}</span>
+          <span class="fr-step-dur">${durLabel}</span>
+        </div>
+        ${output ? `<div class="fr-step-output${step.success ? "" : " fail-output"}">${output}</div>` : ""}
+      </div>`;
+    }).join("");
+
+    const errorHtml = action.error && !action.success
+      ? `<div class="fr-step" style="border-color:rgba(248,113,113,0.2)">
+           <div class="fr-step-head"><span class="fr-step-indicator fail"></span><span class="fr-step-cmd" style="color:#fca5a5">Error: ${escapeHtml(action.error)}</span></div>
+         </div>`
+      : "";
+
+    return `<div class="fr-action" data-action-idx="${idx}">
+      <div class="fr-node ${nodeClass}"><div class="fr-node-dot"></div></div>
+      <div class="fr-action-head">
+        <span class="fr-action-name">${escapeHtml(action.name || "unknown")}</span>
+        <span class="fr-action-meta">
+          <span class="dur">${actionSec}s</span>
+          ${stepCountLabel ? `<span>${stepCountLabel}</span>` : ""}
+          <span class="fr-badge ${nodeClass}">${action.success ? "PASS" : "FAIL"}</span>
+        </span>
+      </div>
+      <div class="fr-steps">
+        ${stepsHtml}
+        ${errorHtml}
+      </div>
+    </div>`;
+  }).join("");
+
+  // Skipped actions
+  const skippedHtml = skippedActions.map(name => `
+    <div class="fr-action">
+      <div class="fr-node skip"><div class="fr-node-dot"></div></div>
+      <div class="fr-action-head">
+        <span class="fr-action-name" style="color:#64748b">${escapeHtml(name)}</span>
+        <span class="fr-action-meta"><span style="color:#475569">skipped</span></span>
+      </div>
+    </div>
+  `).join("");
+
+  // Summary line
+  const summaryParts = [];
+  summaryParts.push(`${passCount}/${totalActions} action${totalActions !== 1 ? "s" : ""} passed`);
+  if (failCount > 0) summaryParts.push(`stopped at ${allActions.find(a => !a.success)?.name || "unknown"}`);
+  if (skippedActions.length > 0) summaryParts.push(`${skippedActions.length} skipped`);
+  if (iterations.length > 0) summaryParts.push(`iteration ${iterations.length} of ${result?.iterationsRequested || iterations.length}`);
+
+  const recorderIcon = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>`;
+
+  container.innerHTML = `
+    <div class="fr-header" data-role="fr-toggle">
+      <div class="fr-title">
+        ${recorderIcon}
+        Flight Recorder — Job ${escapeHtml(jobId.substring(0, 12))}
+        <span class="fr-badge ${jobSuccess ? "pass" : "fail"}">${jobSuccess ? "PASS" : "FAIL"}</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:12px">
+        <span class="fr-elapsed">${totalSec}s</span>
+        <button type="button" class="fr-close" data-role="fr-close" title="Close">&times;</button>
+      </div>
+    </div>
+    <div class="fr-body">
+      <div class="fr-timeline">
+        ${actionsHtml}
+        ${skippedHtml}
+      </div>
+      <div class="fr-summary">${summaryParts.join(" \u00b7 ")}</div>
+    </div>
+  `;
+
+  container.classList.add("visible");
+
+  // Wire up interactivity
+  container.querySelector('[data-role="fr-close"]')?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    container.classList.remove("visible");
+  });
+
+  // Click action head to expand/collapse steps
+  container.querySelectorAll(".fr-action-head").forEach(head => {
+    head.addEventListener("click", () => {
+      const action = head.closest(".fr-action");
+      if (action) action.classList.toggle("expanded");
+    });
+  });
+
+  // Click step head to expand/collapse output
+  container.querySelectorAll(".fr-step-head").forEach(head => {
+    head.addEventListener("click", () => {
+      const step = head.closest(".fr-step");
+      if (step) step.classList.toggle("expanded");
+    });
+  });
 }
 
 async function generate() {
@@ -1432,7 +1974,8 @@ async function submitOneJob(caseId, runRequest) {
 
 async function waitForJob(jobId) {
   return new Promise((resolve) => {
-    const interval = setInterval(async () => {
+    let interval;
+    async function tick() {
       try {
         const res = await fetch(`/api/v1/jobs/${encodeURIComponent(jobId)}`);
         if (!res.ok) return;
@@ -1446,11 +1989,17 @@ async function waitForJob(jobId) {
           resolve({ status: "failed", job });
         }
       } catch (_e) { /* transient */ }
-    }, 3000);
+    }
+    tick();
+    interval = setInterval(tick, 800);
   });
 }
 
-function updateCardRunStatus(caseId, status, message) {
+function updateCardRunStatus(caseId, status, message, jobId, job) {
+  // Store completed job data for re-rendering on page navigation
+  if (job && (status === "succeeded" || status === "failed")) {
+    completedJobData.set(caseId, { jobId: jobId || "", job });
+  }
   // Find the card on the current page
   const cards = resultsEl.querySelectorAll(".result");
   const start = (currentPage - 1) * PAGE_SIZE;
@@ -1470,10 +2019,12 @@ function updateCardRunStatus(caseId, status, message) {
       runningJobs.delete(caseId);
       if (btn) { btn.disabled = false; btn.classList.remove("running"); btn.textContent = "Run"; }
       if (el) { el.className = "run-status visible succeeded"; el.textContent = message || "Succeeded"; }
+      if (el && job) renderFlightRecorder(el, jobId || "", job);
     } else if (status === "failed") {
       runningJobs.delete(caseId);
       if (btn) { btn.disabled = false; btn.classList.remove("running"); btn.textContent = "Run"; }
       if (el) { el.className = "run-status visible failed"; el.textContent = message || "Failed"; }
+      if (el && job) renderFlightRecorder(el, jobId || "", job);
     }
   });
 }
@@ -1516,10 +2067,10 @@ async function bulkRunAll() {
         const result = await waitForJob(jobId);
         if (result.status === "succeeded") {
           succeeded++;
-          updateCardRunStatus(caseId, "succeeded", `Job ${jobId}: succeeded`);
+          updateCardRunStatus(caseId, "succeeded", `Job ${jobId}: succeeded`, jobId, result.job);
         } else {
           failed++;
-          updateCardRunStatus(caseId, "failed", `Job ${jobId}: failed${result.job?.error ? " \u2014 " + result.job.error : ""}`);
+          updateCardRunStatus(caseId, "failed", `Job ${jobId}: failed${result.job?.error ? " \u2014 " + result.job.error : ""}`, jobId, result.job);
         }
       } catch (err) {
         failed++;
@@ -1539,10 +2090,10 @@ async function bulkRunAll() {
         const result = await waitForJob(jobId);
         if (result.status === "succeeded") {
           succeeded++;
-          updateCardRunStatus(caseId, "succeeded", `Job ${jobId}: succeeded`);
+          updateCardRunStatus(caseId, "succeeded", `Job ${jobId}: succeeded`, jobId, result.job);
         } else {
           failed++;
-          updateCardRunStatus(caseId, "failed", `Job ${jobId}: failed${result.job?.error ? " \u2014 " + result.job.error : ""}`);
+          updateCardRunStatus(caseId, "failed", `Job ${jobId}: failed${result.job?.error ? " \u2014 " + result.job.error : ""}`, jobId, result.job);
         }
       } catch (err) {
         failed++;

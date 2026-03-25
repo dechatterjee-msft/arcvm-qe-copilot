@@ -8,6 +8,7 @@ import (
 
 	"arcvm-qe-copilot/internal/ai"
 	"arcvm-qe-copilot/internal/api"
+	"arcvm-qe-copilot/internal/azure"
 	"arcvm-qe-copilot/internal/jobs"
 	"arcvm-qe-copilot/internal/logging"
 	"arcvm-qe-copilot/internal/store"
@@ -27,6 +28,7 @@ func main() {
 	reportBaseDir := getenv("REPORT_BASE_DIR", filepath.Join(".", "artifacts", "longevity"))
 
 	jobManager := jobs.NewManager(azureConfigDir, reportBaseDir, logger)
+	discovery := azure.NewCLI("", logging.Tagged(logger, "Azure CLI"))
 	planner, err := ai.NewServiceFromEnv(logger)
 	if err != nil {
 		srvLog.Printf("AI planner disabled: %v", err)
@@ -47,7 +49,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              host + ":" + port,
-		Handler:           api.NewServer(jobManager, planner, planStore, logger),
+		Handler:           api.NewServer(jobManager, planner, planStore, discovery, logger),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

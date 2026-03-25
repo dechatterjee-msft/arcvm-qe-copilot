@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"arcvm-qe-copilot/internal/ai"
+	"arcvm-qe-copilot/internal/azure"
 	"arcvm-qe-copilot/internal/jobs"
 	"arcvm-qe-copilot/internal/logging"
 	"arcvm-qe-copilot/internal/spec"
@@ -28,7 +30,13 @@ type planner interface {
 	PreviewRuleset(req ai.RulesetPreviewRequest) (*ai.RulesetPreviewResponse, error)
 }
 
-func NewServer(manager jobStarter, planner planner, plans store.PlanStore, logger *log.Logger) http.Handler {
+type discoverer interface {
+	ListSubscriptions(ctx context.Context) ([]azure.Subscription, error)
+	ListResourceGroups(ctx context.Context, subscriptionID string) ([]azure.ResourceGroup, error)
+	ListCustomLocations(ctx context.Context, subscriptionID, resourceGroup string) ([]azure.CustomLocation, error)
+}
+
+func NewServer(manager jobStarter, planner planner, plans store.PlanStore, disc discoverer, logger *log.Logger) http.Handler {
 	mux := http.NewServeMux()
 	registerUIRoutes(mux)
 
@@ -128,6 +136,57 @@ func NewServer(manager jobStarter, planner planner, plans store.PlanStore, logge
 		}
 
 		writeJSON(w, http.StatusOK, job)
+	})
+
+	// --- Azure discovery ---
+	mux.HandleFunc("GET /api/v1/azure/subscriptions", func(w http.ResponseWriter, r *http.Request) {
+		if disc == nil {
+			writeError(w, http.StatusServiceUnavailable, errors.New("azure discovery is not configured"))
+			return
+		}
+		subs, err := disc.ListSubscriptions(r.Context())
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, subs)
+	})
+
+	mux.HandleFunc("GET /api/v1/azure/resource-groups", func(w http.ResponseWriter, r *http.Request) {
+		if disc == nil {
+			writeError(w, http.StatusServiceUnavailable, errors.New("azure discovery is not configured"))
+			return
+		}
+		subID := r.URL.Query().Get("subscriptionId")
+		if subID == "" {
+			writeError(w, http.StatusBadRequest, errors.New("subscriptionId query parameter is required"))
+			return
+		}
+		groups, err := disc.ListResourceGroups(r.Context(), subID)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, groups)
+	})
+
+	mux.HandleFunc("GET /api/v1/azure/custom-locations", func(w http.ResponseWriter, r *http.Request) {
+		if disc == nil {
+			writeError(w, http.StatusServiceUnavailable, errors.New("azure discovery is not configured"))
+			return
+		}
+		subID := r.URL.Query().Get("subscriptionId")
+		rg := r.URL.Query().Get("resourceGroup")
+		if subID == "" || rg == "" {
+			writeError(w, http.StatusBadRequest, errors.New("subscriptionId and resourceGroup query parameters are required"))
+			return
+		}
+		cls, err := disc.ListCustomLocations(r.Context(), subID, rg)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, cls)
 	})
 
 	// --- Saved plans CRUD ---

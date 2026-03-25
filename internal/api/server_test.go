@@ -51,7 +51,7 @@ func (s *stubManager) GetJob(id string) (*jobs.Job, bool) {
 }
 
 func TestHealthz(t *testing.T) {
-	server := NewServer(&stubManager{}, nil, nil, nil)
+	server := NewServer(&stubManager{}, nil, nil, nil, nil)
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
 
@@ -69,7 +69,7 @@ func TestProvisionEndpointAcceptsRequest(t *testing.T) {
 		Status:      "queued",
 		SubmittedAt: time.Now().UTC(),
 	}
-	server := NewServer(&stubManager{job: job}, nil, nil, nil)
+	server := NewServer(&stubManager{job: job}, nil, nil, nil, nil)
 
 	payload := spec.RunRequest{
 		SubscriptionID:   "sub",
@@ -114,7 +114,7 @@ func TestTestPlanEndpoint(t *testing.T) {
 		},
 	}}
 
-	server := NewServer(&stubManager{}, planner, nil, nil)
+	server := NewServer(&stubManager{}, planner, nil, nil, nil)
 
 	payload := ai.TestPlanRequest{Baseline: *validRequest(), CaseCount: 1}
 	raw, _ := json.Marshal(payload)
@@ -141,7 +141,7 @@ func TestRulesetPreviewEndpoint(t *testing.T) {
 		RetrievedRules: []ai.RuleEntry{{RuleID: "rule-1", Category: "admission", Section: "Validation", Content: "VLAN in range"}},
 	}}
 
-	server := NewServer(&stubManager{}, planner, nil, nil)
+	server := NewServer(&stubManager{}, planner, nil, nil, nil)
 
 	payload := ai.RulesetPreviewRequest{
 		DocSource: &ai.DocSource{Type: "local", LocalPath: "./docs/lnet.md"},

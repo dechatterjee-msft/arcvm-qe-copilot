@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"arcvm-qe-copilot/internal/spec"
 )
@@ -17,10 +20,19 @@ type CommandRunner interface {
 	Run(ctx context.Context, env []string, name string, args ...string) ([]byte, error)
 }
 
+// RunEntry records a single CLI invocation for flight-recorder output.
+type RunEntry struct {
+	Command    string `json:"command"`
+	Output     string `json:"output"`
+	DurationMs int64  `json:"durationMs"`
+	Success    bool   `json:"success"`
+}
+
 type CLI struct {
 	runner      CommandRunner
 	logger      *log.Logger
 	azConfigDir string
+	runLog      []RunEntry
 }
 
 type execRunner struct{}
@@ -38,7 +50,7 @@ func (r execRunner) Run(ctx context.Context, env []string, name string, args ...
 	cmd.Env = append(os.Environ(), env...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return output, fmt.Errorf("%s %s failed: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(output)))
+		return output, fmt.Errorf("%s %s failed: %w:\n%s", name, strings.Join(args, " "), err, strings.TrimSpace(string(output)))
 	}
 	return output, nil
 }
@@ -46,6 +58,10 @@ func (r execRunner) Run(ctx context.Context, env []string, name string, args ...
 func (c *CLI) EnsurePrereqs(ctx context.Context, req *spec.RunRequest) error {
 	if err := os.MkdirAll(c.azConfigDir, 0o755); err != nil {
 		return fmt.Errorf("create azure config dir: %w", err)
+	}
+
+	if err := c.seedAuth(); err != nil {
+		c.logger.Printf("Warning: could not seed auth into sandbox: %v", err)
 	}
 
 	if _, err := c.run(ctx, "version"); err != nil {
@@ -77,7 +93,7 @@ func (c *CLI) EnsurePrereqs(ctx context.Context, req *spec.RunRequest) error {
 }
 
 func (c *CLI) EnsureLogicalNetwork(ctx context.Context, req *spec.RunRequest, logicalNetwork spec.LogicalNetworkSpec) (string, error) {
-	if id, found, err := c.showResourceID(ctx, "stack-hci-vm", "network", "lnet", "show", "-g", req.ResourceGroup, "-n", logicalNetwork.Name); err != nil {
+	if id, found, err := c.showResourceID(ctx, "stack-hci-vm", "network", "lnet", "show", "-g", req.ResourceGroup, "--name", logicalNetwork.Name); err != nil {
 		return "", err
 	} else if found {
 		return id, nil
@@ -123,7 +139,7 @@ func (c *CLI) EnsureLogicalNetwork(ctx context.Context, req *spec.RunRequest, lo
 }
 
 func (c *CLI) EnsureNetworkInterface(ctx context.Context, req *spec.RunRequest, networkInterface spec.NetworkInterfaceSpec, networkRef string) (string, error) {
-	if id, found, err := c.showResourceID(ctx, "stack-hci-vm", "network", "nic", "show", "-g", req.ResourceGroup, "-n", networkInterface.Name); err != nil {
+	if id, found, err := c.showResourceID(ctx, "stack-hci-vm", "network", "nic", "show", "-g", req.ResourceGroup, "--name", networkInterface.Name); err != nil {
 		return "", err
 	} else if found {
 		return id, nil
@@ -171,7 +187,7 @@ func (c *CLI) ShowResources(ctx context.Context, req *spec.RunRequest) (spec.Res
 	}
 
 	for _, logicalNetwork := range req.Resources.AllLogicalNetworks() {
-		id, found, err := c.showResourceID(ctx, "stack-hci-vm", "network", "lnet", "show", "-g", req.ResourceGroup, "-n", logicalNetwork.Name)
+		id, found, err := c.showResourceID(ctx, "stack-hci-vm", "network", "lnet", "show", "-g", req.ResourceGroup, "--name", logicalNetwork.Name)
 		if err != nil {
 			return spec.ResourceIDs{}, err
 		}
@@ -181,7 +197,7 @@ func (c *CLI) ShowResources(ctx context.Context, req *spec.RunRequest) (spec.Res
 		ids.LogicalNetworks[logicalNetwork.Name] = id
 	}
 	for _, networkInterface := range req.Resources.AllNetworkInterfaces() {
-		id, found, err := c.showResourceID(ctx, "stack-hci-vm", "network", "nic", "show", "-g", req.ResourceGroup, "-n", networkInterface.Name)
+		id, found, err := c.showResourceID(ctx, "stack-hci-vm", "network", "nic", "show", "-g", req.ResourceGroup, "--name", networkInterface.Name)
 		if err != nil {
 			return spec.ResourceIDs{}, err
 		}
@@ -197,16 +213,16 @@ func (c *CLI) ShowResources(ctx context.Context, req *spec.RunRequest) (spec.Res
 func (c *CLI) CleanupResources(ctx context.Context, req *spec.RunRequest) error {
 	for _, networkInterface := range req.Resources.AllNetworkInterfaces() {
 		if err := c.deleteIfPresent(ctx,
-			[]string{"stack-hci-vm", "network", "nic", "show", "-g", req.ResourceGroup, "-n", networkInterface.Name},
-			[]string{"stack-hci-vm", "network", "nic", "delete", "-g", req.ResourceGroup, "-n", networkInterface.Name, "--yes"},
+			[]string{"stack-hci-vm", "network", "nic", "show", "-g", req.ResourceGroup, "--name", networkInterface.Name},
+			[]string{"stack-hci-vm", "network", "nic", "delete", "-g", req.ResourceGroup, "--name", networkInterface.Name, "--yes"},
 		); err != nil {
 			return err
 		}
 	}
 	for _, logicalNetwork := range req.Resources.AllLogicalNetworks() {
 		if err := c.deleteIfPresent(ctx,
-			[]string{"stack-hci-vm", "network", "lnet", "show", "-g", req.ResourceGroup, "-n", logicalNetwork.Name},
-			[]string{"stack-hci-vm", "network", "lnet", "delete", "-g", req.ResourceGroup, "-n", logicalNetwork.Name, "--yes"},
+			[]string{"stack-hci-vm", "network", "lnet", "show", "-g", req.ResourceGroup, "--name", logicalNetwork.Name},
+			[]string{"stack-hci-vm", "network", "lnet", "delete", "-g", req.ResourceGroup, "--name", logicalNetwork.Name, "--yes"},
 		); err != nil {
 			return err
 		}
@@ -270,12 +286,37 @@ func (c *CLI) ensureProviderRegistered(ctx context.Context, namespace string) er
 	return err
 }
 
+// DrainLog returns and clears the accumulated command log entries.
+func (c *CLI) DrainLog() []RunEntry {
+	entries := c.runLog
+	c.runLog = nil
+	return entries
+}
+
 func (c *CLI) run(ctx context.Context, args ...string) ([]byte, error) {
+	cmd := "az " + strings.Join(args, " ")
 	if c.logger != nil {
-		c.logger.Printf("Running: az %s", strings.Join(args, " "))
+		c.logger.Printf("Running: %s", cmd)
 	}
 
-	return c.runner.Run(ctx, c.env(), "az", append(args, "--only-show-errors")...)
+	start := time.Now()
+	out, err := c.runner.Run(ctx, c.env(), "az", append(args, "--only-show-errors")...)
+	dur := time.Since(start).Milliseconds()
+
+	output := strings.TrimSpace(string(out))
+	const maxOutput = 4096
+	if len(output) > maxOutput {
+		output = output[:maxOutput] + "\n... (truncated)"
+	}
+
+	c.runLog = append(c.runLog, RunEntry{
+		Command:    cmd,
+		Output:     output,
+		DurationMs: dur,
+		Success:    err == nil,
+	})
+
+	return out, err
 }
 
 func (c *CLI) env() []string {
@@ -283,6 +324,52 @@ func (c *CLI) env() []string {
 		return nil
 	}
 	return []string{"AZURE_CONFIG_DIR=" + c.azConfigDir}
+}
+
+// seedAuth copies authentication files from the default ~/.azure directory
+// into the sandboxed config dir so that az commands inherit the login session.
+func (c *CLI) seedAuth() error {
+	if c.azConfigDir == "" {
+		return nil
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	defaultDir := filepath.Join(home, ".azure")
+
+	authFiles := []string{
+		"azureProfile.json",
+		"clouds.config",
+		"msal_token_cache.json",
+		"msal_token_cache.bin",
+		"msal_http_cache.bin",
+		"service_principal_entries.json",
+	}
+
+	for _, name := range authFiles {
+		src := filepath.Join(defaultDir, name)
+		dst := filepath.Join(c.azConfigDir, name)
+
+		in, err := os.Open(src)
+		if err != nil {
+			continue // file may not exist; that's fine
+		}
+
+		out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+		if err != nil {
+			in.Close()
+			continue
+		}
+		_, copyErr := io.Copy(out, in)
+		in.Close()
+		out.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+	}
+	return nil
 }
 
 func (c *CLI) tagArgs(tags map[string]string) []string {
@@ -325,4 +412,59 @@ func isNotFound(err error) bool {
 		strings.Contains(msg, "was not found") ||
 		strings.Contains(msg, "resourcenotfound") ||
 		strings.Contains(msg, "not found")
+}
+
+// --- Discovery: list subscriptions, resource groups, custom locations ---
+
+type Subscription struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	State string `json:"state"`
+}
+
+type ResourceGroup struct {
+	Name     string `json:"name"`
+	Location string `json:"location"`
+}
+
+type CustomLocation struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Location string `json:"location"`
+}
+
+func (c *CLI) ListSubscriptions(ctx context.Context) ([]Subscription, error) {
+	raw, err := c.run(ctx, "account", "list", "--query", "[].{id:id, name:name, state:state}", "-o", "json")
+	if err != nil {
+		return nil, fmt.Errorf("list subscriptions: %w", err)
+	}
+	var subs []Subscription
+	if err := json.Unmarshal(raw, &subs); err != nil {
+		return nil, fmt.Errorf("parse subscriptions: %w", err)
+	}
+	return subs, nil
+}
+
+func (c *CLI) ListResourceGroups(ctx context.Context, subscriptionID string) ([]ResourceGroup, error) {
+	raw, err := c.run(ctx, "group", "list", "--subscription", subscriptionID, "--query", "[].{name:name, location:location}", "-o", "json")
+	if err != nil {
+		return nil, fmt.Errorf("list resource groups: %w", err)
+	}
+	var groups []ResourceGroup
+	if err := json.Unmarshal(raw, &groups); err != nil {
+		return nil, fmt.Errorf("parse resource groups: %w", err)
+	}
+	return groups, nil
+}
+
+func (c *CLI) ListCustomLocations(ctx context.Context, subscriptionID, resourceGroup string) ([]CustomLocation, error) {
+	raw, err := c.run(ctx, "customlocation", "list", "--subscription", subscriptionID, "-g", resourceGroup, "--query", "[].{id:id, name:name, location:location}", "-o", "json")
+	if err != nil {
+		return nil, fmt.Errorf("list custom locations: %w", err)
+	}
+	var cls []CustomLocation
+	if err := json.Unmarshal(raw, &cls); err != nil {
+		return nil, fmt.Errorf("parse custom locations: %w", err)
+	}
+	return cls, nil
 }
