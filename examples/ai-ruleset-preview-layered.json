@@ -1,0 +1,25 @@
+{
+  "layers": {
+    "azureDocs": [
+      {
+        "url": "https://learn.microsoft.com/en-us/azure/azure-local/manage/create-logical-networks?view=azloc-2602&tabs=azurecli"
+      }
+    ],
+    "readmeArchitecture": {
+      "type": "ado",
+      "ado": {
+        "organizationUrl": "https://msazure.visualstudio.com/One",
+        "project": "One",
+        "repository": "azlocal-overlay",
+        "filePath": "/docs/implementation/Microsoft.AzureStackHCI/logicalNetworks/windows/README.md",
+        "branch": "main"
+      }
+    }
+  },
+  "retrieval": {
+    "query": "static lnet admission validation immutability overlap readiness",
+    "topK": 25,
+	"useEmbeddings": true,
+	"lexical": "bm25"
+  }
+}

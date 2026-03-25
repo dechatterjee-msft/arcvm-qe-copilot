@@ -1,0 +1,13 @@
+{
+  "docSource": {
+    "type": "azure-docs",
+    "azureDocs": {
+      "url": "https://learn.microsoft.com/en-us/azure/azure-local/manage/create-logical-networks?view=azloc-2602&tabs=azurecli"
+    }
+  },
+  "retrieval": {
+    "query": "static logical network admission validation vlan ip pools overlap",
+    "topK": 20,
+    "useEmbeddings": true
+  }
+}

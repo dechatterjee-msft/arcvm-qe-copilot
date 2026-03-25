@@ -1,0 +1,37 @@
+{
+  "subscriptionId": "00000000-0000-0000-0000-000000000000",
+  "resourceGroup": "rg-arcvm-qe",
+  "location": "eastus2",
+  "customLocationId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-arcvm-qe/providers/Microsoft.ExtendedLocation/customLocations/arc-local-cl",
+  "tags": {
+    "owner": "qe",
+    "suite": "arcvm-static-lnet"
+  },
+  "resources": {
+    "logicalNetwork": {
+      "name": "qe-static-lnet-001",
+      "addressPrefix": "192.168.201.0/24",
+      "ipAllocationMethod": "Static",
+      "ipPoolStart": "192.168.201.50",
+      "ipPoolEnd": "192.168.201.100",
+      "ipPoolType": "vm",
+      "gateway": "192.168.201.1",
+      "dnsServers": [
+        "192.168.201.10",
+        "192.168.201.11"
+      ],
+      "vlan": 201,
+      "vmSwitchName": "ConvergedSwitch"
+    }
+  },
+  "longevity": {
+    "iterations": 1,
+    "interval": "5m",
+    "maxFailures": 1,
+    "actions": [
+      "provision",
+      "show",
+      "cleanup"
+    ]
+  }
+}

@@ -1,0 +1,71 @@
+{
+  "subscriptionId": "00000000-0000-0000-0000-000000000000",
+  "resourceGroup": "rg-arcvm-qe",
+  "location": "eastus2",
+  "customLocationId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-arcvm-qe/providers/Microsoft.ExtendedLocation/customLocations/arc-local-cl",
+  "tags": {
+    "owner": "qe",
+    "suite": "arcvm-network"
+  },
+  "resources": {
+    "logicalNetworks": [
+      {
+        "name": "qe-lnet-a",
+        "addressPrefix": "10.20.0.0/24",
+        "ipAllocationMethod": "Static",
+        "ipPoolStart": "10.20.0.20",
+        "ipPoolEnd": "10.20.0.40",
+        "ipPoolType": "vm",
+        "gateway": "10.20.0.1",
+        "dnsServers": [
+          "8.8.8.8",
+          "8.8.4.4"
+        ],
+        "vlan": 120,
+        "vmSwitchName": "ConvergedSwitch"
+      },
+      {
+        "name": "qe-lnet-b",
+        "addressPrefix": "10.21.0.0/24",
+        "ipAllocationMethod": "Static",
+        "ipPoolStart": "10.21.0.20",
+        "ipPoolEnd": "10.21.0.40",
+        "ipPoolType": "vm",
+        "gateway": "10.21.0.1",
+        "dnsServers": [
+          "1.1.1.1",
+          "1.0.0.1"
+        ],
+        "vlan": 121,
+        "vmSwitchName": "ConvergedSwitch"
+      }
+    ],
+    "networkInterfaces": [
+      {
+        "name": "qe-nic-a1",
+        "networkRef": "qe-lnet-a",
+        "ipAddress": "10.20.0.21"
+      },
+      {
+        "name": "qe-nic-a2",
+        "networkRef": "qe-lnet-a",
+        "ipAddress": "10.20.0.22"
+      },
+      {
+        "name": "qe-nic-b1",
+        "networkRef": "qe-lnet-b",
+        "ipAddress": "10.21.0.21"
+      }
+    ]
+  },
+  "longevity": {
+    "iterations": 24,
+    "interval": "30m",
+    "jitter": "2m",
+    "maxFailures": 3,
+    "actions": [
+      "provision",
+      "show"
+    ]
+  }
+}

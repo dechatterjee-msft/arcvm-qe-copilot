@@ -1,0 +1,48 @@
+{
+  "baseline": {
+    "subscriptionId": "00000000-0000-0000-0000-000000000000",
+    "resourceGroup": "rg-arcvm-qe",
+    "location": "eastus2",
+    "customLocationId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-arcvm-qe/providers/Microsoft.ExtendedLocation/customLocations/arc-local-cl",
+    "resources": {
+      "logicalNetwork": {
+        "name": "qe-static-lnet-001",
+        "addressPrefix": "192.168.201.0/24",
+        "ipAllocationMethod": "Static",
+        "ipPoolStart": "192.168.201.50",
+        "ipPoolEnd": "192.168.201.100",
+        "gateway": "192.168.201.1",
+        "dnsServers": [
+          "192.168.201.10"
+        ],
+        "vlan": 201,
+        "vmSwitchName": "ConvergedSwitch"
+      }
+    },
+    "longevity": {
+      "iterations": 1,
+      "actions": [
+        "provision",
+        "show",
+        "cleanup"
+      ]
+    }
+  },
+  "docSource": {
+    "type": "ado",
+    "ado": {
+      "organizationUrl": "https://dev.azure.com/<org>",
+      "project": "One",
+      "repository": "azlocal-overlay",
+      "filePath": "/docs/implementation/Microsoft.AzureStackHCI/logicalNetworks/windows/README.md",
+      "branch": "main"
+    }
+  },
+  "retrieval": {
+    "query": "static lnet admission validation immutability overlap",
+    "topK": 20,
+    "useEmbeddings": true
+  },
+  "caseCount": 20,
+  "strategy": "high coverage"
+}

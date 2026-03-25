@@ -1,0 +1,1358 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Azure Local QE Copilot</title>
+    <style>
+      :root {
+        --bg-0: #07131a;
+        --bg-1: #0d1f27;
+        --panel: rgba(8, 19, 26, 0.84);
+        --panel-soft: rgba(11, 27, 36, 0.72);
+        --line: rgba(169, 199, 213, 0.16);
+        --line-strong: rgba(169, 199, 213, 0.28);
+        --text: #edf5f6;
+        --muted: #9fb1ba;
+        --accent: #6ee7d2;
+        --accent-2: #67b7ff;
+        --success: #bbf7d0;
+        --danger: #fecdd3;
+        --shadow: 0 28px 64px rgba(0, 0, 0, 0.28);
+        --radius-xl: 28px;
+        --radius-lg: 20px;
+        --radius-md: 16px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        color: var(--text);
+        font-family: "Avenir Next", "Segoe UI Variable", "IBM Plex Sans", sans-serif;
+        background:
+          radial-gradient(circle at 20% 10%, rgba(103, 183, 255, 0.12), transparent 24%),
+          radial-gradient(circle at 82% 0%, rgba(154, 128, 255, 0.12), transparent 28%),
+          linear-gradient(180deg, #171933, #12182c 42%, #0d1f27 100%);
+      }
+
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background:
+          linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+        background-size: 72px 72px;
+        mask-image: radial-gradient(circle at 50% 20%, black 16%, transparent 82%);
+        opacity: 0.16;
+      }
+
+      button,
+      input,
+      textarea {
+        font: inherit;
+      }
+
+      button {
+        border: 0;
+        background: none;
+        color: inherit;
+      }
+
+      .page {
+        position: relative;
+        max-width: 1440px;
+        margin: 0 auto;
+        padding: 36px 18px 72px;
+      }
+
+      .split-layout {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 18px;
+      }
+
+      .split-layout.has-results {
+        grid-template-columns: 380px minmax(0, 1fr);
+        align-items: start;
+      }
+
+      .split-layout.has-results .composer {
+        position: sticky;
+        top: 18px;
+        max-height: calc(100vh - 36px);
+        overflow-y: auto;
+        padding: 18px;
+      }
+
+      .split-layout.has-results .composer textarea {
+        min-height: 120px;
+      }
+
+      .split-layout.has-results .composer-top {
+        flex-direction: column;
+      }
+
+      .split-layout.has-results .composer-actions {
+        min-width: unset;
+        width: 100%;
+      }
+
+      .split-layout.has-results .quick-prompts {
+        grid-template-columns: 1fr;
+        gap: 8px;
+      }
+
+      .split-layout.has-results .chip span {
+        display: none;
+      }
+
+      .split-layout.has-results .prompt-footer {
+        display: none;
+      }
+
+      .surface {
+        border: 1px solid var(--line);
+        border-radius: var(--radius-xl);
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 24%),
+          linear-gradient(160deg, var(--panel), var(--panel-soft));
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(14px);
+      }
+
+      .planner-head {
+        margin-bottom: 18px;
+        padding: 8px 4px 14px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        flex-wrap: wrap;
+      }
+
+      .planner-head .brand {
+        display: grid;
+        gap: 4px;
+      }
+
+      .planner-head h1 {
+        margin: 0;
+        font-size: 1.85rem;
+        letter-spacing: -0.04em;
+        font-weight: 800;
+        background: linear-gradient(135deg, #6ee7d2, #67b7ff 55%, #a78bfa);
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+      }
+
+      .planner-head .tagline {
+        color: var(--muted);
+        font-size: 0.84rem;
+        letter-spacing: 0.01em;
+      }
+
+      .composer,
+      .results-shell {
+        padding: 24px;
+      }
+
+      .composer-top,
+      .results-top,
+      .command-head,
+      .bulk-actions {
+        display: flex;
+        align-items: start;
+        justify-content: space-between;
+        gap: 14px;
+        flex-wrap: wrap;
+      }
+
+      .section-label {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        color: #9de9dd;
+        font-size: 0.75rem;
+        letter-spacing: 0.15em;
+        text-transform: uppercase;
+      }
+
+      .section-label svg {
+        flex-shrink: 0;
+      }
+
+      .composer-top h2,
+      .results-top h2 {
+        margin: 8px 0 0;
+        font-size: 1.4rem;
+        letter-spacing: -0.03em;
+      }
+
+      .composer-top p,
+      .results-top p {
+        margin: 6px 0 0;
+        color: var(--muted);
+        line-height: 1.55;
+      }
+
+      .composer-actions {
+        display: grid;
+        gap: 12px;
+        min-width: 240px;
+      }
+
+      label {
+        display: grid;
+        gap: 8px;
+      }
+
+      .field-label {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        color: #d6e5e8;
+        font-size: 0.92rem;
+      }
+
+      .field-hint {
+        color: var(--muted);
+        font-size: 0.8rem;
+      }
+
+      .depth-picker {
+        display: grid;
+        gap: 8px;
+      }
+
+      .depth-toggle {
+        display: flex;
+        gap: 6px;
+      }
+
+      .depth-btn {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 5px;
+        padding: 9px 10px;
+        border-radius: 12px;
+        border: 1px solid rgba(169, 199, 213, 0.13);
+        background: rgba(3, 12, 17, 0.45);
+        color: var(--muted);
+        font-size: 0.82rem;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 180ms ease;
+      }
+
+      .depth-btn:hover {
+        border-color: rgba(169, 199, 213, 0.28);
+        color: var(--text);
+      }
+
+      .depth-btn.active {
+        border-color: var(--accent);
+        background: rgba(45, 136, 255, 0.1);
+        color: var(--accent);
+        box-shadow: 0 0 8px rgba(45, 136, 255, 0.15);
+      }
+
+      textarea,
+      input[type="text"],
+      input[type="number"] {
+        width: 100%;
+        border-radius: 18px;
+        border: 1px solid rgba(169, 199, 213, 0.18);
+        background: rgba(3, 12, 17, 0.5);
+        color: var(--text);
+        outline: none;
+        transition: border-color 180ms ease, box-shadow 180ms ease;
+      }
+
+      textarea {
+        margin-top: 16px;
+        min-height: 220px;
+        padding: 18px 18px 16px;
+        resize: vertical;
+        font-size: 0.99rem;
+        line-height: 1.65;
+      }
+
+      input[type="text"],
+      input[type="number"] {
+        min-height: 52px;
+        padding: 0 16px;
+        font-size: 1rem;
+      }
+
+      textarea:focus,
+      input[type="text"]:focus,
+      input[type="number"]:focus {
+        border-color: rgba(110, 231, 210, 0.44);
+        box-shadow: 0 0 0 4px rgba(110, 231, 210, 0.1);
+      }
+
+      .prompt-footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-top: 10px;
+        color: var(--muted);
+        font-size: 0.84rem;
+      }
+
+      .file-upload-zone {
+        margin-top: 14px;
+        padding: 14px 16px;
+        border-radius: 16px;
+        border: 1.5px dashed rgba(169, 199, 213, 0.2);
+        background: rgba(3, 12, 17, 0.3);
+        text-align: center;
+        cursor: pointer;
+        transition: border-color 180ms ease, background 180ms ease;
+        position: relative;
+      }
+
+      .file-upload-zone:hover,
+      .file-upload-zone.drag-over {
+        border-color: rgba(110, 231, 210, 0.4);
+        background: rgba(110, 231, 210, 0.04);
+      }
+
+      .file-upload-zone .upload-label {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        color: var(--muted);
+        font-size: 0.84rem;
+      }
+
+      .file-upload-zone .upload-label strong {
+        color: #6ee7d2;
+      }
+
+      .file-upload-zone input[type="file"] {
+        position: absolute;
+        inset: 0;
+        opacity: 0;
+        cursor: pointer;
+      }
+
+      .file-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 10px;
+      }
+
+      .file-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 10px;
+        border-radius: 10px;
+        background: rgba(110, 231, 210, 0.08);
+        border: 1px solid rgba(110, 231, 210, 0.18);
+        color: #d5e4e8;
+        font-size: 0.78rem;
+        font-family: "SFMono-Regular", "IBM Plex Mono", "Menlo", monospace;
+      }
+
+      .file-chip .remove-file {
+        background: none;
+        border: none;
+        color: #8aa3ae;
+        cursor: pointer;
+        font-size: 0.9rem;
+        padding: 0 2px;
+        line-height: 1;
+      }
+
+      .file-chip .remove-file:hover {
+        color: #fca5a5;
+      }
+
+      .file-chip .file-size {
+        color: var(--muted);
+      }
+
+      .quick-prompts {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 10px;
+        margin-top: 16px;
+      }
+
+      .chip {
+        border-radius: 18px;
+        border: 1px solid rgba(169, 199, 213, 0.16);
+        background: rgba(255, 255, 255, 0.03);
+        padding: 14px;
+        text-align: left;
+        cursor: pointer;
+        transition: transform 180ms ease, border-color 180ms ease, background 180ms ease;
+      }
+
+      .chip:hover {
+        transform: translateY(-1px);
+        border-color: rgba(110, 231, 210, 0.28);
+        background: rgba(255, 255, 255, 0.05);
+      }
+
+      .chip strong {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 0.9rem;
+      }
+
+      .chip span {
+        display: block;
+        margin-top: 7px;
+        color: var(--muted);
+        font-size: 0.81rem;
+        line-height: 1.45;
+      }
+
+      .primary-btn,
+      .secondary-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        min-height: 50px;
+        padding: 0 18px;
+        border-radius: 16px;
+        cursor: pointer;
+        transition: transform 180ms ease, border-color 180ms ease, background 180ms ease, box-shadow 180ms ease;
+      }
+
+      .primary-btn svg,
+      .secondary-btn svg {
+        flex-shrink: 0;
+      }
+
+      .primary-btn {
+        width: 100%;
+        border: 1px solid rgba(110, 231, 210, 0.2);
+        background: linear-gradient(135deg, rgba(110, 231, 210, 0.95), rgba(103, 183, 255, 0.92));
+        color: #05202a;
+        box-shadow: 0 16px 32px rgba(103, 183, 255, 0.2);
+        font-weight: 700;
+      }
+
+      .primary-btn:hover,
+      .secondary-btn:hover {
+        transform: translateY(-1px);
+      }
+
+      .primary-btn:disabled,
+      .secondary-btn:disabled {
+        cursor: not-allowed;
+        opacity: 0.6;
+        transform: none;
+      }
+
+      .secondary-btn {
+        min-height: 42px;
+        padding: 0 14px;
+        border: 1px solid rgba(169, 199, 213, 0.16);
+        background: rgba(255, 255, 255, 0.03);
+        color: #d5e4e8;
+        font-size: 0.85rem;
+      }
+
+      .secondary-btn.accepted {
+        border-color: rgba(187, 247, 208, 0.34);
+        background: rgba(187, 247, 208, 0.08);
+        color: #ecfdf5;
+      }
+
+      .results-shell {
+        margin-top: 18px;
+      }
+
+      .run-meta {
+        align-self: start;
+        border: 1px solid rgba(169, 199, 213, 0.16);
+        border-radius: 999px;
+        padding: 8px 12px;
+        color: #cae2ff;
+        font-size: 0.82rem;
+        background: rgba(103, 183, 255, 0.08);
+      }
+
+      .status {
+        min-height: 54px;
+        display: flex;
+        align-items: center;
+        padding: 0 16px;
+        margin-top: 16px;
+        border-radius: 16px;
+        border: 1px solid rgba(169, 199, 213, 0.16);
+        background: rgba(255, 255, 255, 0.03);
+        color: #d6e5e8;
+      }
+
+      .status.error {
+        border-color: rgba(251, 113, 133, 0.24);
+        background: rgba(251, 113, 133, 0.08);
+        color: var(--danger);
+      }
+
+      .status.success {
+        border-color: rgba(187, 247, 208, 0.22);
+        background: rgba(187, 247, 208, 0.07);
+        color: var(--success);
+      }
+
+      .generation-info {
+        display: none;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 14px;
+      }
+
+      .generation-info.visible {
+        display: flex;
+      }
+
+      .info-pill,
+      .citation-pill {
+        display: inline-flex;
+        align-items: center;
+        min-height: 32px;
+        padding: 6px 11px;
+        border-radius: 999px;
+        border: 1px solid rgba(169, 199, 213, 0.16);
+        background: rgba(255, 255, 255, 0.03);
+        color: #d5e4e8;
+        font-size: 0.8rem;
+      }
+
+      .bulk-actions {
+        display: none;
+        margin-top: 14px;
+        padding: 12px 14px;
+        border-radius: 16px;
+        border: 1px solid rgba(169, 199, 213, 0.16);
+        background: rgba(255, 255, 255, 0.03);
+      }
+
+      .bulk-actions.visible {
+        display: flex;
+      }
+
+      .bulk-actions .left {
+        color: #d6e5e8;
+        font-size: 0.9rem;
+      }
+
+      .bulk-actions .right {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+
+      .run-mode-toggle {
+        display: inline-flex;
+        border-radius: 12px;
+        border: 1px solid rgba(169, 199, 213, 0.16);
+        overflow: hidden;
+      }
+
+      .mode-btn {
+        padding: 6px 12px;
+        border: 0;
+        background: transparent;
+        color: #8aa3ae;
+        font-size: 0.8rem;
+        cursor: pointer;
+        transition: background 150ms ease, color 150ms ease;
+      }
+
+      .mode-btn.active {
+        background: rgba(110, 231, 210, 0.12);
+        color: #6ee7d2;
+      }
+
+      .mode-btn:hover:not(.active) {
+        background: rgba(255, 255, 255, 0.04);
+      }
+
+      .run-all-btn.running {
+        border-color: rgba(250, 204, 21, 0.35);
+        background: rgba(250, 204, 21, 0.1);
+        color: #fef08a;
+      }
+
+      .bulk-run-status {
+        display: none;
+        margin-top: 8px;
+        padding: 10px 14px;
+        border-radius: 14px;
+        border: 1px solid rgba(169, 199, 213, 0.12);
+        background: rgba(2, 10, 15, 0.4);
+        font-size: 0.82rem;
+        font-family: "SFMono-Regular", "IBM Plex Mono", "Menlo", monospace;
+        color: #d5e4e8;
+      }
+
+      .bulk-run-status.visible {
+        display: block;
+      }
+
+      .bulk-run-status.running {
+        border-color: rgba(250, 204, 21, 0.2);
+        color: #fde68a;
+      }
+
+      .bulk-run-status.done {
+        border-color: rgba(187, 247, 208, 0.2);
+        color: #bbf7d0;
+      }
+
+      /* --- Save Modal --- */
+      .save-modal-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        z-index: 1000;
+        background: rgba(0, 0, 0, 0.6);
+        backdrop-filter: blur(4px);
+        align-items: center;
+        justify-content: center;
+      }
+      .save-modal-overlay.visible { display: flex; }
+      .save-modal {
+        background: #0f1c24;
+        border: 1px solid rgba(169, 199, 213, 0.18);
+        border-radius: 18px;
+        padding: 28px 32px;
+        width: 420px;
+        max-width: 90vw;
+      }
+      .save-modal h3 {
+        margin: 0 0 16px;
+        font-size: 1.1rem;
+        color: #e1ecef;
+      }
+      .save-modal label {
+        display: block;
+        font-size: 0.82rem;
+        color: #8aa3ae;
+        margin-bottom: 4px;
+      }
+      .save-modal input {
+        width: 100%;
+        padding: 8px 12px;
+        border-radius: 10px;
+        border: 1px solid rgba(169, 199, 213, 0.2);
+        background: rgba(255, 255, 255, 0.04);
+        color: #e1ecef;
+        font-size: 0.9rem;
+        margin-bottom: 14px;
+        box-sizing: border-box;
+      }
+      .save-modal-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        margin-top: 8px;
+      }
+      .save-modal-actions button {
+        padding: 8px 18px;
+        border-radius: 10px;
+        border: 1px solid rgba(169, 199, 213, 0.18);
+        background: transparent;
+        color: #a9c7d5;
+        cursor: pointer;
+        font-size: 0.85rem;
+      }
+      .save-modal-actions .confirm-btn {
+        background: rgba(110, 231, 210, 0.12);
+        color: #6ee7d2;
+        border-color: rgba(110, 231, 210, 0.25);
+      }
+
+      /* --- Saved Plans --- */
+      .saved-plans {
+        margin-top: 18px;
+        border: 1px solid rgba(169, 199, 213, 0.12);
+        border-radius: 16px;
+        overflow: hidden;
+      }
+      .saved-plans summary {
+        padding: 12px 16px;
+        cursor: pointer;
+        color: #a9c7d5;
+        font-size: 0.9rem;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        user-select: none;
+      }
+      .saved-plans summary:hover { background: rgba(255, 255, 255, 0.02); }
+      .saved-plans[open] summary { border-bottom: 1px solid rgba(169, 199, 213, 0.08); }
+      .saved-plans-list {
+        padding: 8px;
+        display: grid;
+        gap: 6px;
+        max-height: 260px;
+        overflow-y: auto;
+      }
+      .saved-plan-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 12px;
+        border-radius: 12px;
+        border: 1px solid rgba(169, 199, 213, 0.1);
+        background: rgba(255, 255, 255, 0.02);
+        font-size: 0.82rem;
+        color: #d5e4e8;
+      }
+      .saved-plan-row .plan-name { flex: 1; font-weight: 500; }
+      .saved-plan-row .plan-meta { color: #8aa3ae; font-size: 0.78rem; }
+      .saved-plan-row button {
+        padding: 4px 10px;
+        border-radius: 8px;
+        border: 1px solid rgba(169, 199, 213, 0.15);
+        background: transparent;
+        color: #a9c7d5;
+        cursor: pointer;
+        font-size: 0.78rem;
+      }
+      .saved-plan-row button:hover { background: rgba(255, 255, 255, 0.06); }
+      .saved-plan-row .delete-btn:hover { color: #f87171; border-color: rgba(248, 113, 113, 0.3); }
+
+      .results {
+        display: grid;
+        gap: 14px;
+        margin-top: 14px;
+      }
+
+      .empty-state,
+      .skeleton-card,
+      .result {
+        border-radius: 22px;
+        border: 1px solid rgba(169, 199, 213, 0.14);
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, 0.05), transparent 22%),
+          rgba(5, 15, 21, 0.52);
+      }
+
+      .empty-state {
+        padding: 28px;
+      }
+
+      .empty-state h3 {
+        margin: 10px 0 8px;
+        font-size: 1.3rem;
+        letter-spacing: -0.03em;
+      }
+
+      .empty-state p {
+        margin: 0;
+        max-width: 60ch;
+        color: var(--muted);
+        line-height: 1.6;
+      }
+
+      .skeleton-card {
+        min-height: 220px;
+        padding: 20px;
+        overflow: hidden;
+        position: relative;
+      }
+
+      .skeleton-card::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.08), transparent);
+        transform: translateX(-100%);
+        animation: shimmer 1.8s infinite;
+      }
+
+      .skeleton-line {
+        height: 14px;
+        margin-top: 12px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.08);
+      }
+
+      .skeleton-line.short {
+        width: 30%;
+      }
+
+      .skeleton-line.medium {
+        width: 52%;
+      }
+
+      .skeleton-line.long {
+        width: 88%;
+      }
+
+      .result {
+        padding: 20px;
+      }
+
+      .result.is-accepted {
+        border-color: rgba(187, 247, 208, 0.3);
+      }
+
+      .result-head {
+        display: flex;
+        align-items: start;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+
+      .result-head h3 {
+        margin: 4px 0 0;
+        font-size: 1.08rem;
+        letter-spacing: -0.03em;
+      }
+
+      .case-tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        color: #a8efe3;
+        font-size: 0.75rem;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+
+      .case-pills,
+      .citation-row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .case-pill {
+        display: inline-flex;
+        align-items: center;
+        min-height: 30px;
+        padding: 5px 10px;
+        border-radius: 999px;
+        border: 1px solid rgba(169, 199, 213, 0.14);
+        background: rgba(255, 255, 255, 0.03);
+        color: #d8e7ea;
+        font-size: 0.78rem;
+      }
+
+      .result-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 14px;
+      }
+
+      .meta-card {
+        padding: 14px;
+        border-radius: 16px;
+        border: 1px solid rgba(169, 199, 213, 0.12);
+        background: rgba(255, 255, 255, 0.03);
+      }
+
+      .meta-card strong {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        color: var(--muted);
+        font-size: 0.74rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      .meta-card span {
+        display: block;
+        margin-top: 9px;
+        line-height: 1.55;
+      }
+
+      .citation-row {
+        margin-top: 12px;
+      }
+
+      .command-shell {
+        margin-top: 16px;
+        border-radius: 18px;
+        border: 1px solid rgba(169, 199, 213, 0.14);
+        background: rgba(2, 10, 15, 0.46);
+        overflow: hidden;
+      }
+
+      .command-head {
+        padding: 14px 16px;
+        border-bottom: 1px solid rgba(169, 199, 213, 0.12);
+      }
+
+      .command-head strong {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 0.94rem;
+      }
+
+      .command-head span {
+        display: block;
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 0.82rem;
+      }
+
+      .command-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .cli-editor {
+        min-height: 180px;
+        border: 0;
+        border-radius: 0;
+        padding: 16px;
+        background: transparent;
+        color: #dff9ff;
+        font-family: "SFMono-Regular", "IBM Plex Mono", "Menlo", monospace;
+        font-size: 0.84rem;
+        line-height: 1.55;
+        box-shadow: none;
+      }
+
+      .cli-editor:focus {
+        box-shadow: inset 0 0 0 1px rgba(110, 231, 210, 0.28);
+      }
+
+      .run-btn.running {
+        border-color: rgba(250, 204, 21, 0.35);
+        background: rgba(250, 204, 21, 0.1);
+        color: #fef08a;
+      }
+
+      .run-status {
+        display: none;
+        padding: 10px 16px;
+        border-top: 1px solid rgba(169, 199, 213, 0.1);
+        font-size: 0.82rem;
+        font-family: "SFMono-Regular", "IBM Plex Mono", "Menlo", monospace;
+      }
+
+      .run-status.visible {
+        display: block;
+      }
+
+      .run-status.running {
+        color: #fde68a;
+        background: rgba(250, 204, 21, 0.04);
+      }
+
+      .run-status.succeeded {
+        color: #bbf7d0;
+        background: rgba(187, 247, 208, 0.05);
+      }
+
+      .run-status.failed {
+        color: #fca5a5;
+        background: rgba(252, 165, 165, 0.05);
+      }
+
+      .run-details {
+        display: none;
+        margin-top: 16px;
+        border-radius: 18px;
+        border: 1px solid rgba(169, 199, 213, 0.14);
+        background: rgba(255, 255, 255, 0.03);
+        overflow: hidden;
+      }
+
+      .run-details.visible {
+        display: block;
+      }
+
+      .run-details summary {
+        cursor: pointer;
+        list-style: none;
+        padding: 14px 16px;
+        font-weight: 600;
+      }
+
+      .run-details summary::-webkit-details-marker {
+        display: none;
+      }
+
+      .run-details summary::after {
+        content: "Show";
+        float: right;
+        color: var(--muted);
+        font-weight: 500;
+      }
+
+      .run-details[open] summary::after {
+        content: "Hide";
+      }
+
+      .details-body {
+        display: grid;
+        gap: 12px;
+        padding: 0 16px 16px;
+      }
+
+      .detail-block {
+        padding: 14px;
+        border-radius: 16px;
+        border: 1px solid rgba(169, 199, 213, 0.12);
+        background: rgba(255, 255, 255, 0.03);
+      }
+
+      .detail-block h3 {
+        margin: 0;
+        font-size: 0.95rem;
+      }
+
+      .detail-block p {
+        margin: 8px 0 0;
+        color: var(--muted);
+        line-height: 1.55;
+      }
+
+      .detail-list {
+        display: grid;
+        gap: 10px;
+        margin-top: 12px;
+      }
+
+      .detail-item {
+        padding: 12px;
+        border-radius: 14px;
+        border: 1px solid rgba(169, 199, 213, 0.12);
+        background: rgba(255, 255, 255, 0.03);
+      }
+
+      .detail-item strong {
+        display: block;
+        font-size: 0.86rem;
+      }
+
+      .detail-item span {
+        display: block;
+        margin-top: 6px;
+        color: var(--muted);
+        font-size: 0.82rem;
+        line-height: 1.5;
+        overflow-wrap: anywhere;
+      }
+
+      .pagination {
+        display: none;
+        justify-content: center;
+        align-items: center;
+        gap: 6px;
+        margin-top: 16px;
+        flex-wrap: wrap;
+      }
+
+      .pagination.visible {
+        display: flex;
+      }
+
+      .page-btn {
+        min-width: 38px;
+        min-height: 38px;
+        padding: 6px 10px;
+        border-radius: 12px;
+        border: 1px solid rgba(169, 199, 213, 0.16);
+        background: rgba(255, 255, 255, 0.03);
+        color: #d5e4e8;
+        font-size: 0.84rem;
+        cursor: pointer;
+        transition: border-color 180ms ease, background 180ms ease;
+      }
+
+      .page-btn:hover {
+        border-color: rgba(110, 231, 210, 0.28);
+        background: rgba(255, 255, 255, 0.06);
+      }
+
+      .page-btn.active {
+        border-color: rgba(110, 231, 210, 0.44);
+        background: rgba(110, 231, 210, 0.12);
+        color: #a8efe3;
+        font-weight: 600;
+      }
+
+      .page-btn:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+      }
+
+      .page-info {
+        color: var(--muted);
+        font-size: 0.82rem;
+        padding: 0 8px;
+      }
+
+      @keyframes shimmer {
+        100% {
+          transform: translateX(100%);
+        }
+      }
+
+      @media (max-width: 1100px) {
+        .split-layout.has-results {
+          grid-template-columns: 320px minmax(0, 1fr);
+        }
+      }
+
+      @media (max-width: 900px) {
+        .split-layout.has-results {
+          grid-template-columns: 1fr;
+        }
+
+        .split-layout.has-results .composer {
+          position: static;
+          max-height: none;
+          overflow-y: visible;
+        }
+
+        .split-layout.has-results .composer textarea {
+          min-height: 160px;
+        }
+
+        .split-layout.has-results .chip span {
+          display: block;
+        }
+
+        .split-layout.has-results .prompt-footer {
+          display: flex;
+        }
+
+        .quick-prompts,
+        .result-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      @media (max-width: 700px) {
+        .page {
+          padding: 24px 14px 56px;
+        }
+
+        .composer,
+        .results-shell {
+          padding: 18px;
+        }
+
+        .quick-prompts,
+        .result-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      /* --- Resource Tabs --- */
+      .resource-tabs {
+        display: flex;
+        gap: 6px;
+        padding: 2px 0 10px;
+        overflow-x: auto;
+        scrollbar-width: thin;
+        scrollbar-color: rgba(169,199,213,0.15) transparent;
+      }
+      .resource-tabs::-webkit-scrollbar { height: 4px; }
+      .resource-tabs::-webkit-scrollbar-thumb { background: rgba(169,199,213,0.15); border-radius: 4px; }
+      .resource-tab {
+        flex-shrink: 0;
+        padding: 6px 14px;
+        border-radius: 10px;
+        border: 1px solid rgba(169,199,213,0.14);
+        background: rgba(255,255,255,0.03);
+        color: #8aa3ae;
+        font-size: 0.78rem;
+        font-weight: 500;
+        cursor: pointer;
+        white-space: nowrap;
+        transition: background 150ms ease, color 150ms ease, border-color 150ms ease;
+        user-select: none;
+      }
+      .resource-tab:hover {
+        background: rgba(255,255,255,0.06);
+        color: #c5d8de;
+      }
+      .resource-tab.active {
+        background: rgba(110,231,210,0.10);
+        color: #6ee7d2;
+        border-color: rgba(110,231,210,0.28);
+      }
+      .resource-tab-label {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 0.72rem;
+        color: #8aa3ae;
+        margin-bottom: 2px;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <header class="planner-head">
+        <div class="brand">
+          <span class="section-label"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> Planner</span>
+          <h1>Azure Local QE Copilot</h1>
+          <span class="tagline">AI-driven test case generation for Azure Local resources</span>
+        </div>
+      </header>
+
+      <div id="splitLayout" class="split-layout">
+      <section id="planner" class="surface composer">
+        <div class="composer-top">
+          <div class="composer-actions">
+            <div class="depth-picker">
+              <span class="field-label"><span>Depth</span><span id="caseCountDisplay" class="field-hint">8 cases</span></span>
+              <div id="depthToggle" class="depth-toggle">
+                <button type="button" class="depth-btn" data-count="4"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> Quick</button>
+                <button type="button" class="depth-btn active" data-count="8"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg> Standard</button>
+                <button type="button" class="depth-btn" data-count="12"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg> Thorough</button>
+              </div>
+              <input id="caseCount" type="hidden" value="8" />
+            </div>
+
+            <button class="primary-btn" id="generateBtn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> Generate Test Cases</button>
+          </div>
+        </div>
+
+        <div class="resource-tab-label"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg> Resource Type</div>
+        <nav id="resourceTabs" class="resource-tabs" aria-label="Resource type">
+          <button type="button" class="resource-tab active" data-resource="lnet">LNET</button>
+          <button type="button" class="resource-tab" data-resource="nic">NIC</button>
+          <button type="button" class="resource-tab" data-resource="nsg">NSG</button>
+          <button type="button" class="resource-tab" data-resource="storagepath">StoragePath</button>
+          <button type="button" class="resource-tab" data-resource="vm">VM</button>
+          <button type="button" class="resource-tab" data-resource="vhd">VHD</button>
+          <button type="button" class="resource-tab" data-resource="storagecontainer">StorageContainer</button>
+          <button type="button" class="resource-tab" data-resource="galleryimage">GalleryImage</button>
+          <button type="button" class="resource-tab" data-resource="e2e">E2E</button>
+        </nav>
+
+        <label for="prompt">
+          <span class="field-label">
+            <span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg> Strategy Prompt</span>
+            <span id="promptLengthHint" class="field-hint">Planner ready</span>
+          </span>
+        </label>
+        <textarea id="prompt" placeholder="Example: Test invalid gateway and DNS combinations, subnet overlap across VLAN boundaries, immutable field updates after create, and cleanup safety across repeated runs"></textarea>
+
+        <div class="prompt-footer">
+          <span>Use Cmd/Ctrl + Enter to generate.</span>
+        </div>
+
+        <div id="fileUploadZone" class="file-upload-zone">
+          <input type="file" id="fileInput" multiple accept=".json,.yaml,.yml,.txt,.md,.log,.csv,.xml,.toml,.sh,.ps1,.go,.py" />
+          <div class="upload-label"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> <strong>Drop files</strong> or click to attach context (JSON, YAML, Markdown, logs, scripts)</div>
+        </div>
+        <div id="fileChips" class="file-chips"></div>
+
+        <div id="quickPrompts" class="quick-prompts"></div>
+      </section>
+
+      <section id="resultsShell" class="surface results-shell">
+        <div class="results-top">
+          <div>
+            <span class="section-label"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg> Generated Plan</span>
+            <h2>Cases and command flows</h2>
+            <p>Review, edit, and accept only the command sets you want to keep.</p>
+          </div>
+          <span id="runMeta" class="run-meta">Ready to generate</span>
+        </div>
+
+        <div id="status" class="status"></div>
+        <div id="generationInfo" class="generation-info"></div>
+
+        <section id="bulkActions" class="bulk-actions" aria-live="polite">
+          <div id="acceptedSummary" class="left">Accepted 0 of 0 cases</div>
+          <div class="right">
+            <div class="run-mode-toggle">
+              <button type="button" class="mode-btn active" id="modeParallelBtn" data-mode="parallel">Parallel</button>
+              <button type="button" class="mode-btn" id="modeSequentialBtn" data-mode="sequential">Sequential</button>
+            </div>
+            <button type="button" class="secondary-btn run-all-btn" id="runAllBtn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg> Run All</button>
+            <button type="button" class="secondary-btn" id="acceptAllBtn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Accept All</button>
+            <button type="button" class="secondary-btn" id="clearAcceptedBtn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> Clear</button>
+            <button type="button" class="secondary-btn" id="copyAcceptedBtn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copy Accepted</button>
+            <button type="button" class="secondary-btn" id="savePlanBtn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Save Plan</button>
+          </div>
+        </section>
+        <div id="bulkRunStatus" class="bulk-run-status"></div>
+
+        <div id="results" class="results">
+          <article class="empty-state">
+            <h3>No test cases yet</h3>
+          </article>
+        </div>
+
+        <nav id="pagination" class="pagination" aria-label="Test case pages"></nav>
+
+        <details id="runDetails" class="run-details">
+          <summary><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg> Run details</summary>
+          <div class="details-body">
+            <section class="detail-block">
+              <h3>Evidence</h3>
+              <p id="evidenceSummary">Retrieved rules from the last run will appear here.</p>
+              <div id="rulesList" class="detail-list"></div>
+            </section>
+
+            <section id="ensemblePanel" class="detail-block">
+              <h3>Ensemble</h3>
+              <p id="ensembleSelected">No ensemble data for this run.</p>
+              <div id="ensembleList" class="detail-list"></div>
+            </section>
+          </div>
+        </details>
+
+        <details id="savedPlans" class="saved-plans">
+          <summary><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Saved Plans</summary>
+          <div id="savedPlansList" class="saved-plans-list">
+            <p style="color:#8aa3ae;font-size:0.82rem;text-align:center;padding:12px 0;">No saved plans yet.</p>
+          </div>
+        </details>
+      </section>
+      </div>
+    </main>
+
+    <!-- Save Plan Modal -->
+    <div id="saveModal" class="save-modal-overlay" role="dialog" aria-modal="true">
+      <div class="save-modal">
+        <h3><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Save Plan</h3>
+        <label for="planNameInput">Plan name</label>
+        <input type="text" id="planNameInput" placeholder="e.g. Smoke tests — logical network" maxlength="120" autocomplete="off" />
+        <div class="save-modal-actions">
+          <button type="button" id="saveCancelBtn">Cancel</button>
+          <button type="button" id="saveConfirmBtn" class="confirm-btn">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="/ui.js"></script>
+  </body>
+</html>

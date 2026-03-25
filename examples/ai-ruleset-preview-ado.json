@@ -1,0 +1,17 @@
+{
+  "docSource": {
+    "type": "ado",
+    "ado": {
+      "organizationUrl": "https://dev.azure.com/<org>",
+      "project": "One",
+      "repository": "azlocal-overlay",
+      "filePath": "/docs/implementation/Microsoft.AzureStackHCI/logicalNetworks/windows/README.md",
+      "branch": "main"
+    }
+  },
+  "retrieval": {
+    "query": "static lnet admission immutability overlap",
+    "topK": 20,
+    "useEmbeddings": true
+  }
+}

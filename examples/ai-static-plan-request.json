@@ -1,0 +1,53 @@
+{
+  "baseline": {
+    "subscriptionId": "00000000-0000-0000-0000-000000000000",
+    "resourceGroup": "rg-arcvm-qe",
+    "location": "eastus2",
+    "customLocationId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-arcvm-qe/providers/Microsoft.ExtendedLocation/customLocations/arc-local-cl",
+    "resources": {
+      "logicalNetwork": {
+        "name": "qe-static-lnet-001",
+        "addressPrefix": "192.168.201.0/24",
+        "ipAllocationMethod": "Static",
+        "ipPoolStart": "192.168.201.50",
+        "ipPoolEnd": "192.168.201.100",
+        "gateway": "192.168.201.1",
+        "dnsServers": [
+          "192.168.201.10"
+        ],
+        "vlan": 201,
+        "vmSwitchName": "ConvergedSwitch"
+      }
+    },
+    "longevity": {
+      "iterations": 1,
+      "actions": [
+        "provision",
+        "show",
+        "cleanup"
+      ]
+    }
+  },
+  "caseCount": 8,
+  "strategy": "focus on static lnet edge cases and operational safety",
+  "contextChunks": [
+    {
+      "chunkId": "ms-static-required",
+      "sourceUrl": "https://learn.microsoft.com/en-us/azure/azure-local/manage/create-logical-networks?view=azloc-2602&tabs=azurecli",
+      "section": "Create a static logical network via CLI",
+      "content": "For static IP, gateway, dns-servers, and vlan must be specified."
+    },
+    {
+      "chunkId": "ms-overlap-vlan",
+      "sourceUrl": "https://learn.microsoft.com/en-us/azure/azure-local/manage/create-logical-networks?view=azloc-2602&tabs=azurecli",
+      "section": "Create logical network via CLI",
+      "content": "Creating logical networks with overlapping IP pools on the same VLAN isn't permitted."
+    },
+    {
+      "chunkId": "ms-immutable-fields",
+      "sourceUrl": "https://learn.microsoft.com/en-us/azure/azure-local/manage/create-logical-networks?view=azloc-2602&tabs=azurecli",
+      "section": "Create the logical network",
+      "content": "After creation, default gateway, IP pools, IP address space, VLAN ID, and virtual switch name can't be updated."
+    }
+  ]
+}

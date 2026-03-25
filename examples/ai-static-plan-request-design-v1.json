@@ -1,0 +1,235 @@
+{
+  "baseline": {
+    "subscriptionId": "00000000-0000-0000-0000-000000000000",
+    "resourceGroup": "rg-arcvm-qe",
+    "location": "eastus2",
+    "customLocationId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-arcvm-qe/providers/Microsoft.ExtendedLocation/customLocations/arc-local-cl",
+    "resources": {
+      "logicalNetwork": {
+        "name": "qe-static-lnet-001",
+        "addressPrefix": "192.168.201.0/24",
+        "ipAllocationMethod": "Static",
+        "ipPoolStart": "192.168.201.50",
+        "ipPoolEnd": "192.168.201.100",
+        "gateway": "192.168.201.1",
+        "dnsServers": [
+          "192.168.201.10"
+        ],
+        "vlan": 201,
+        "vmSwitchName": "ConvergedSwitch"
+      }
+    },
+    "longevity": {
+      "iterations": 1,
+      "actions": [
+        "provision",
+        "show",
+        "cleanup"
+      ]
+    }
+  },
+  "caseCount": 25,
+  "strategy": "maximize coverage of static lnet admission validation, cross-lnet overlap behavior, immutability, reconcile status, and lifecycle edges",
+  "contextChunks": [
+    {
+      "chunkId": "lnet-001-overview-source-of-truth",
+      "section": "Overview",
+      "content": "LNET is ARM-defined source of truth for VM networking and binds NICs to vmSwitchName present on every node."
+    },
+    {
+      "chunkId": "lnet-002-overview-subnet-intent",
+      "section": "Overview",
+      "content": "LNET carries subnet intent including addressPrefix, ipPools, routes, VLAN, and DNS."
+    },
+    {
+      "chunkId": "lnet-003-overview-static-mode",
+      "section": "Overview",
+      "content": "Static subnet mode allocates VM IPs from configured ipPools."
+    },
+    {
+      "chunkId": "lnet-004-overview-dynamic-mode",
+      "section": "Overview",
+      "content": "Dynamic subnet mode uses DHCP and can have zero subnets in current behavior."
+    },
+    {
+      "chunkId": "lnet-005-overview-vlan-semantics",
+      "section": "Overview",
+      "content": "VLAN non-zero means tagged traffic; VLAN zero or omitted means untagged."
+    },
+    {
+      "chunkId": "lnet-006-overview-single-subnet-limit",
+      "section": "Overview",
+      "content": "Webhook currently allows at most one subnet; creating more than one subnet is rejected."
+    },
+    {
+      "chunkId": "lnet-007-overview-switch-consistency",
+      "section": "Overview",
+      "content": "Valid configuration requires same vmSwitchName to exist on every node."
+    },
+    {
+      "chunkId": "lnet-008-overview-pool-host-range",
+      "section": "Overview",
+      "content": "IP pools must lie within subnet usable host range, excluding network and broadcast addresses."
+    },
+    {
+      "chunkId": "lnet-009-admission-cidr-parse",
+      "section": "Admission Validation",
+      "content": "CIDR must parse as IPv4 and /31 and /32 are rejected; network and broadcast must be computable."
+    },
+    {
+      "chunkId": "lnet-010-admission-gateway-in-cidr",
+      "section": "Admission Validation",
+      "content": "Gateway, if provided, must be inside subnet CIDR."
+    },
+    {
+      "chunkId": "lnet-011-admission-dns-ipv4",
+      "section": "Admission Validation",
+      "content": "Each DNS server entry must be a valid IPv4 address."
+    },
+    {
+      "chunkId": "lnet-012-admission-vlan-range",
+      "section": "Admission Validation",
+      "content": "VLAN must be integer in 0..4094; VLAN 0 or omitted is untagged."
+    },
+    {
+      "chunkId": "lnet-013-admission-pool-inside-usable",
+      "section": "Admission Validation",
+      "content": "Each pool start/end must be inside usable host range for the subnet."
+    },
+    {
+      "chunkId": "lnet-014-admission-pool-no-overlap",
+      "section": "Admission Validation",
+      "content": "Pools in same subnet can be non-contiguous but must be disjoint and non-overlapping."
+    },
+    {
+      "chunkId": "lnet-015-admission-pool-order",
+      "section": "Admission Validation",
+      "content": "Pool ranges with start greater than end are invalid."
+    },
+    {
+      "chunkId": "lnet-016-nic-reuse-static-allowed",
+      "section": "Gateway/DNS Reuse",
+      "content": "NIC IP equal to LNET DNS or gateway is allowed only for static NIC allocation in Workload LNET and only when not infra-reserved."
+    },
+    {
+      "chunkId": "lnet-017-nic-reuse-dynamic-blocked",
+      "section": "Gateway/DNS Reuse",
+      "content": "Dynamic NIC IP allocation must not allow NIC IP to equal LNET DNS or gateway."
+    },
+    {
+      "chunkId": "lnet-018-validation-infra-lnet-check",
+      "section": "Gateway/DNS Reuse Validation Flow",
+      "content": "On LNET create/update, reject if configured DNS or gateway belongs to Infrastructure LNET IP pool range."
+    },
+    {
+      "chunkId": "lnet-019-validation-existing-nic-check",
+      "section": "Gateway/DNS Reuse Validation Flow",
+      "content": "Validation must check existing NIC IPs for collision with configured DNS or gateway values."
+    },
+    {
+      "chunkId": "lnet-020-validation-static-nic-annotation",
+      "section": "Gateway/DNS Reuse Validation Flow",
+      "content": "NICs with customer-provided explicit IP should be annotated at creation to distinguish static allocation for policy decisions."
+    },
+    {
+      "chunkId": "lnet-021-dns-reserved-list-behavior",
+      "section": "DNS Update Semantics",
+      "content": "DNS server updates do not require IPPool reserved list mutation because reserved state is already managed through allocation semantics."
+    },
+    {
+      "chunkId": "lnet-022-cross-lnet-overlap-same-vlan",
+      "section": "Cross-LNET Rules",
+      "content": "Overlapping IPv4 prefixes on same VLAN across LNETs must be rejected."
+    },
+    {
+      "chunkId": "lnet-023-cross-lnet-overlap-diff-vlan",
+      "section": "Cross-LNET Rules",
+      "content": "Overlapping IPv4 prefixes can be allowed across different VLANs."
+    },
+    {
+      "chunkId": "lnet-024-cross-lnet-disjoint-same-vlan",
+      "section": "Cross-LNET Rules",
+      "content": "Disjoint IPv4 prefixes on the same VLAN are allowed."
+    },
+    {
+      "chunkId": "lnet-025-immutability-subnet-name",
+      "section": "Immutability",
+      "content": "Subnet name cannot be changed after creation."
+    },
+    {
+      "chunkId": "lnet-026-immutability-no-subnet-delete",
+      "section": "Immutability",
+      "content": "Transition from one subnet to zero subnets is rejected; subnet deletion is not allowed."
+    },
+    {
+      "chunkId": "lnet-027-immutability-shape-guardrails",
+      "section": "Immutability",
+      "content": "Transition from zero to one subnet with addressPrefix, ippools, ipAllocationMethod, routes, or vlan is rejected."
+    },
+    {
+      "chunkId": "lnet-028-aks-finalizer-dns-block",
+      "section": "AKS Guardrails",
+      "content": "If LNET has aksarc-prefixed finalizer, DNS server mutation is blocked with validation error."
+    },
+    {
+      "chunkId": "lnet-029-aks-finalizer-noop",
+      "section": "AKS Guardrails",
+      "content": "With AKS finalizer, no-op DNS update with identical value may be accepted."
+    },
+    {
+      "chunkId": "lnet-030-aks-finalizer-removed",
+      "section": "AKS Guardrails",
+      "content": "After AKS finalizer removal, previously blocked DNS change can succeed if otherwise valid."
+    },
+    {
+      "chunkId": "lnet-031-reconcile-triggers",
+      "section": "Reconcile Flow",
+      "content": "Reconcile is triggered by LNET add/update/delete, NIC CR changes, and NodeInventory changes."
+    },
+    {
+      "chunkId": "lnet-032-reconcile-switch-presence",
+      "section": "Reconcile Flow",
+      "content": "Controller computes allNodesHaveVSwitch by checking vmSwitchName presence per node via Node Inventory."
+    },
+    {
+      "chunkId": "lnet-033-reconcile-used-available",
+      "section": "Reconcile Flow",
+      "content": "Used and available per pool are derived from NIC CR assigned IPs intersecting each pool range."
+    },
+    {
+      "chunkId": "lnet-034-reconcile-ready-condition",
+      "section": "Reconcile Flow",
+      "content": "Ready is true only when all nodes have the vSwitch and no pool is exhausted."
+    },
+    {
+      "chunkId": "lnet-035-reconcile-status-patch",
+      "section": "Reconcile Flow",
+      "content": "Status patch updates pool info.used and info.available values for each subnet pool."
+    },
+    {
+      "chunkId": "lnet-036-ippool-ownerref",
+      "section": "IPPool Lifecycle",
+      "content": "IPPool ownerReferences should point to LNET so delete cascades when appropriate."
+    },
+    {
+      "chunkId": "lnet-037-ippool-spec-alignment",
+      "section": "IPPool Lifecycle",
+      "content": "IPPool logicalNetworkArmID, cidr, and ranges should align with LNET subnet configuration."
+    },
+    {
+      "chunkId": "lnet-038-ippool-ready-phase",
+      "section": "IPPool Lifecycle",
+      "content": "IPPool should transition to Ready with non-zero capacity for non-empty static IPv4 pools."
+    },
+    {
+      "chunkId": "lnet-039-allocation-accounting",
+      "section": "IP Allocation",
+      "content": "IPAllocation should update pool used/available counts and advance lastAllocatedIP after allocations."
+    },
+    {
+      "chunkId": "lnet-040-observability-condition-flips",
+      "section": "Observability",
+      "content": "Controller logs should emphasize condition flips and reconcile outcome summaries with node counts and duration."
+    }
+  ]
+}

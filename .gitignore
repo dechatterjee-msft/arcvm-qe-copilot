@@ -1,0 +1,42 @@
+# Azure CLI config (per-job sandboxes)
+.azure/
+
+# Build artifacts
+bin/
+dist/
+
+# Data & databases
+data/
+*.db
+*.db-shm
+*.db-wal
+identifier.sqlite
+
+# Test & longevity artifacts
+artifacts/
+
+# Environment
+.env
+.env.local
+
+# Go
+.gocache/
+vendor/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.out
+coverage.html
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
