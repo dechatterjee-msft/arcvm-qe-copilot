@@ -178,6 +178,48 @@ func (c *Client) ChatJSONWithDeployment(ctx context.Context, deployment, systemP
 	return stripMarkdownCodeFence(content), nil
 }
 
+// Chat sends a multi-turn conversation to Azure OpenAI and returns the
+// assistant's reply as plain text.
+func (c *Client) Chat(ctx context.Context, messages []chatMessage) (string, error) {
+	deployment := c.cfg.Deployment
+	url := fmt.Sprintf("%s/openai/deployments/%s/chat/completions?api-version=%s", c.cfg.Endpoint, deployment, c.cfg.APIVersion)
+
+	payload := chatCompletionsRequest{Messages: messages}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("marshal chat request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(raw))
+	if err != nil {
+		return "", fmt.Errorf("create chat request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("api-key", c.cfg.APIKey)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("call azure openai: %w", err)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	resp.Body.Close()
+	if err != nil {
+		return "", fmt.Errorf("read chat response: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("azure openai returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var out chatCompletionsResponse
+	if err := json.Unmarshal(body, &out); err != nil {
+		return "", fmt.Errorf("decode chat response: %w", err)
+	}
+	if len(out.Choices) == 0 {
+		return "", fmt.Errorf("azure openai returned no choices")
+	}
+	return strings.TrimSpace(out.Choices[0].Message.Content), nil
+}
+
 func isTimeoutErr(err error) bool {
 	if err == nil {
 		return false

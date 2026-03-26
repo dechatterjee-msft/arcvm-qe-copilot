@@ -16,9 +16,11 @@ import (
 )
 
 type Harness struct {
-	cli    *azure.CLI
-	logger *log.Logger
-	rng    *rand.Rand
+	cli           *azure.CLI
+	logger        *log.Logger
+	rng           *rand.Rand
+	OnActionStart func(name string)
+	OnActionDone  func(name string, success bool, errMsg string)
 }
 
 type ProvisionResult struct {
@@ -72,16 +74,34 @@ func New(cli *azure.CLI, logger *log.Logger) *Harness {
 
 func (h *Harness) Provision(ctx context.Context, req *spec.RunRequest) (*ProvisionResult, error) {
 	h.cli.DrainLog() // clear any stale entries
+	if h.OnActionStart != nil {
+		h.OnActionStart("prereqs")
+	}
 	if err := h.cli.EnsurePrereqs(ctx, req); err != nil {
+		if h.OnActionDone != nil {
+			h.OnActionDone("prereqs", false, err.Error())
+		}
 		return &ProvisionResult{
 			CompletedAt: time.Now().UTC(),
 			PrereqSteps: h.cli.DrainLog(),
 		}, err
 	}
+	if h.OnActionDone != nil {
+		h.OnActionDone("prereqs", true, "")
+	}
 
+	if h.OnActionStart != nil {
+		h.OnActionStart("provision")
+	}
 	resources, err := h.provisionResources(ctx, req)
 	if err != nil {
+		if h.OnActionDone != nil {
+			h.OnActionDone("provision", false, err.Error())
+		}
 		return nil, err
+	}
+	if h.OnActionDone != nil {
+		h.OnActionDone("provision", true, "")
 	}
 
 	return &ProvisionResult{
@@ -93,7 +113,13 @@ func (h *Harness) Provision(ctx context.Context, req *spec.RunRequest) (*Provisi
 func (h *Harness) RunLongevity(ctx context.Context, req *spec.RunRequest) (*LongevityReport, error) {
 	h.cli.DrainLog() // clear any stale entries
 	now := time.Now().UTC()
+	if h.OnActionStart != nil {
+		h.OnActionStart("prereqs")
+	}
 	if err := h.cli.EnsurePrereqs(ctx, req); err != nil {
+		if h.OnActionDone != nil {
+			h.OnActionDone("prereqs", false, err.Error())
+		}
 		prereqSteps := h.cli.DrainLog()
 		fin := time.Now().UTC()
 		return &LongevityReport{
@@ -119,6 +145,9 @@ func (h *Harness) RunLongevity(ctx context.Context, req *spec.RunRequest) (*Long
 			FailedIterations: 1,
 			Success:          false,
 		}, err
+	}
+	if h.OnActionDone != nil {
+		h.OnActionDone("prereqs", true, "")
 	}
 
 	report := &LongevityReport{
@@ -234,6 +263,10 @@ func (h *Harness) runIteration(ctx context.Context, req *spec.RunRequest, action
 		// Drain any stale log entries before this action.
 		h.cli.DrainLog()
 
+		if h.OnActionStart != nil {
+			h.OnActionStart(action)
+		}
+
 		step := ActionResult{
 			Name:      action,
 			StartedAt: time.Now().UTC(),
@@ -261,11 +294,17 @@ func (h *Harness) runIteration(ctx context.Context, req *spec.RunRequest, action
 			step.Success = false
 			step.Error = err.Error()
 			result.Actions = append(result.Actions, step)
+			if h.OnActionDone != nil {
+				h.OnActionDone(action, false, err.Error())
+			}
 			return resources, fmt.Errorf("%s failed: %w", action, err)
 		}
 
 		step.Success = true
 		result.Actions = append(result.Actions, step)
+		if h.OnActionDone != nil {
+			h.OnActionDone(action, true, "")
+		}
 	}
 
 	return resources, nil

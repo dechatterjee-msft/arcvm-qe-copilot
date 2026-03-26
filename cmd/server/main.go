@@ -11,6 +11,7 @@ import (
 	"arcvm-qe-copilot/internal/azure"
 	"arcvm-qe-copilot/internal/jobs"
 	"arcvm-qe-copilot/internal/logging"
+	"arcvm-qe-copilot/internal/logs"
 	"arcvm-qe-copilot/internal/store"
 
 	"github.com/joho/godotenv"
@@ -29,6 +30,11 @@ func main() {
 
 	jobManager := jobs.NewManager(azureConfigDir, reportBaseDir, logger)
 	discovery := azure.NewCLI("", logging.Tagged(logger, "Azure CLI"))
+
+	kubeconfig := getenv("KUBECONFIG", "")
+	logDir := getenv("LOG_DIR", filepath.Join(".", "data", "logs"))
+	logSvc := logs.NewService(kubeconfig, logDir, logging.Tagged(logger, "LogAnalysis"))
+
 	planner, err := ai.NewServiceFromEnv(logger)
 	if err != nil {
 		srvLog.Printf("AI planner disabled: %v", err)
@@ -49,7 +55,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              host + ":" + port,
-		Handler:           api.NewServer(jobManager, planner, planStore, discovery, logger),
+		Handler:           api.NewServer(jobManager, planner, planStore, discovery, logSvc, logger),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

@@ -61,6 +61,22 @@ func NewServiceFromEnv(logger *log.Logger) (Service, error) {
 	}, nil
 }
 
+// ChatMessage is a role+content pair for multi-turn chat.
+type ChatMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+// Chat sends a multi-turn conversation to the underlying Azure OpenAI model
+// and returns the assistant's reply.
+func (p *Planner) Chat(ctx context.Context, messages []ChatMessage) (string, error) {
+	internal := make([]chatMessage, len(messages))
+	for i, m := range messages {
+		internal[i] = chatMessage{Role: m.Role, Content: m.Content}
+	}
+	return p.client.Chat(ctx, internal)
+}
+
 func (p *Planner) PreviewRuleset(req RulesetPreviewRequest) (*RulesetPreviewResponse, error) {
 	rules, meta, selected, err := p.buildRulesContext(context.Background(), req.DocSource, req.Layers, req.Retrieval, nil)
 	if err != nil {

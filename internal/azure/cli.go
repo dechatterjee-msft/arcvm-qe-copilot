@@ -33,6 +33,7 @@ type CLI struct {
 	logger      *log.Logger
 	azConfigDir string
 	runLog      []RunEntry
+	OnStep      func(RunEntry) // called after each command completes (optional)
 }
 
 type execRunner struct{}
@@ -309,12 +310,16 @@ func (c *CLI) run(ctx context.Context, args ...string) ([]byte, error) {
 		output = output[:maxOutput] + "\n... (truncated)"
 	}
 
-	c.runLog = append(c.runLog, RunEntry{
+	entry := RunEntry{
 		Command:    cmd,
 		Output:     output,
 		DurationMs: dur,
 		Success:    err == nil,
-	})
+	}
+	c.runLog = append(c.runLog, entry)
+	if c.OnStep != nil {
+		c.OnStep(entry)
+	}
 
 	return out, err
 }

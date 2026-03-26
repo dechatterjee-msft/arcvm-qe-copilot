@@ -5,6 +5,10 @@
 bin/
 dist/
 
+# Node / React frontend
+web/node_modules/
+web/dist/
+
 # Data & databases
 data/
 *.db

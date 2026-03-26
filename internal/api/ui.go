@@ -4,6 +4,7 @@ import (
 	"embed"
 	"io/fs"
 	"net/http"
+	"strings"
 )
 
 //go:embed ui/*
@@ -16,14 +17,22 @@ func registerUIRoutes(mux *http.ServeMux) {
 	}
 
 	fileServer := http.FileServer(http.FS(sub))
-	mux.Handle("GET /ui.js", fileServer)
+
+	// Serve the React SPA: static assets are served directly,
+	// all other routes fall back to index.html for client-side routing.
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFileFS(w, r, sub, "launch.html")
-	})
-	mux.HandleFunc("GET /launch", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFileFS(w, r, sub, "launch.html")
-	})
-	mux.HandleFunc("GET /planner", func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/")
+		if path == "" {
+			http.ServeFileFS(w, r, sub, "index.html")
+			return
+		}
+		// Try serving as a static file first
+		if f, err := sub.Open(path); err == nil {
+			f.Close()
+			fileServer.ServeHTTP(w, r)
+			return
+		}
+		// Fall back to index.html for SPA routes
 		http.ServeFileFS(w, r, sub, "index.html")
 	})
 }

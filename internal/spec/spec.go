@@ -18,6 +18,8 @@ type RunRequest struct {
 	Tags             map[string]string `json:"tags,omitempty"`
 	Resources        Resources         `json:"resources"`
 	Longevity        LongevitySpec     `json:"longevity,omitempty"`
+	CaseID           string            `json:"caseId,omitempty"`
+	Description      string            `json:"description,omitempty"`
 }
 
 type Resources struct {
@@ -32,6 +34,79 @@ type Resources struct {
 	VirtualHardDisk      *VirtualHardDiskSpec      `json:"virtualHardDisk,omitempty"`
 	StorageContainer     *StorageContainerSpec     `json:"storageContainer,omitempty"`
 	GalleryImage         *GalleryImageSpec         `json:"galleryImage,omitempty"`
+}
+
+// UnmarshalJSON handles LLM responses that return singular fields (logicalNetwork,
+// networkInterface) as arrays instead of objects.
+func (r *Resources) UnmarshalJSON(data []byte) error {
+	// Use a raw-message wrapper so we can inspect logicalNetwork / networkInterface
+	// before committing to a concrete type.
+	type rawResources struct {
+		LogicalNetwork    json.RawMessage        `json:"logicalNetwork,omitempty"`
+		LogicalNetworks   []LogicalNetworkSpec   `json:"logicalNetworks,omitempty"`
+		NetworkInterface  json.RawMessage        `json:"networkInterface,omitempty"`
+		NetworkInterfaces []NetworkInterfaceSpec `json:"networkInterfaces,omitempty"`
+
+		NetworkSecurityGroup *NetworkSecurityGroupSpec `json:"networkSecurityGroup,omitempty"`
+		StoragePath          *StoragePathSpec          `json:"storagePath,omitempty"`
+		VirtualMachine       *VirtualMachineSpec       `json:"virtualMachine,omitempty"`
+		VirtualHardDisk      *VirtualHardDiskSpec      `json:"virtualHardDisk,omitempty"`
+		StorageContainer     *StorageContainerSpec     `json:"storageContainer,omitempty"`
+		GalleryImage         *GalleryImageSpec         `json:"galleryImage,omitempty"`
+	}
+
+	var raw rawResources
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	// logicalNetwork: accept object or array
+	if len(raw.LogicalNetwork) > 0 {
+		trimmed := strings.TrimSpace(string(raw.LogicalNetwork))
+		if strings.HasPrefix(trimmed, "[") {
+			var arr []LogicalNetworkSpec
+			if err := json.Unmarshal(raw.LogicalNetwork, &arr); err != nil {
+				return fmt.Errorf("logicalNetwork: %w", err)
+			}
+			r.LogicalNetworks = append(r.LogicalNetworks, arr...)
+		} else {
+			var single LogicalNetworkSpec
+			if err := json.Unmarshal(raw.LogicalNetwork, &single); err != nil {
+				return fmt.Errorf("logicalNetwork: %w", err)
+			}
+			r.LogicalNetwork = &single
+		}
+	}
+
+	// networkInterface: accept object or array
+	if len(raw.NetworkInterface) > 0 {
+		trimmed := strings.TrimSpace(string(raw.NetworkInterface))
+		if strings.HasPrefix(trimmed, "[") {
+			var arr []NetworkInterfaceSpec
+			if err := json.Unmarshal(raw.NetworkInterface, &arr); err != nil {
+				return fmt.Errorf("networkInterface: %w", err)
+			}
+			r.NetworkInterfaces = append(r.NetworkInterfaces, arr...)
+		} else {
+			var single NetworkInterfaceSpec
+			if err := json.Unmarshal(raw.NetworkInterface, &single); err != nil {
+				return fmt.Errorf("networkInterface: %w", err)
+			}
+			r.NetworkInterface = &single
+		}
+	}
+
+	// Copy the remaining fields directly.
+	r.LogicalNetworks = append(r.LogicalNetworks, raw.LogicalNetworks...)
+	r.NetworkInterfaces = append(r.NetworkInterfaces, raw.NetworkInterfaces...)
+	r.NetworkSecurityGroup = raw.NetworkSecurityGroup
+	r.StoragePath = raw.StoragePath
+	r.VirtualMachine = raw.VirtualMachine
+	r.VirtualHardDisk = raw.VirtualHardDisk
+	r.StorageContainer = raw.StorageContainer
+	r.GalleryImage = raw.GalleryImage
+
+	return nil
 }
 
 type LogicalNetworkSpec struct {
@@ -105,10 +180,10 @@ type StorageContainerSpec struct {
 }
 
 type GalleryImageSpec struct {
-	Name              string `json:"name"`
-	ImagePath         string `json:"imagePath,omitempty"`
-	OSType            string `json:"osType,omitempty"`
-	HyperVGeneration  string `json:"hyperVGeneration,omitempty"`
+	Name             string `json:"name"`
+	ImagePath        string `json:"imagePath,omitempty"`
+	OSType           string `json:"osType,omitempty"`
+	HyperVGeneration string `json:"hyperVGeneration,omitempty"`
 }
 
 type LongevitySpec struct {

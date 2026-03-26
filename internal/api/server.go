@@ -14,6 +14,7 @@ import (
 	"arcvm-qe-copilot/internal/azure"
 	"arcvm-qe-copilot/internal/jobs"
 	"arcvm-qe-copilot/internal/logging"
+	"arcvm-qe-copilot/internal/logs"
 	"arcvm-qe-copilot/internal/spec"
 	"arcvm-qe-copilot/internal/store"
 )
@@ -23,11 +24,16 @@ type jobStarter interface {
 	StartLongevity(request *spec.RunRequest) (*jobs.Job, error)
 	ListJobs() []*jobs.Job
 	GetJob(id string) (*jobs.Job, bool)
+	CancelJob(id string) bool
 }
 
 type planner interface {
 	GenerateTestPlan(req ai.TestPlanRequest) (*ai.TestPlanResponse, error)
 	PreviewRuleset(req ai.RulesetPreviewRequest) (*ai.RulesetPreviewResponse, error)
+}
+
+type chatter interface {
+	Chat(ctx context.Context, messages []ai.ChatMessage) (string, error)
 }
 
 type discoverer interface {
@@ -36,7 +42,7 @@ type discoverer interface {
 	ListCustomLocations(ctx context.Context, subscriptionID, resourceGroup string) ([]azure.CustomLocation, error)
 }
 
-func NewServer(manager jobStarter, planner planner, plans store.PlanStore, disc discoverer, logger *log.Logger) http.Handler {
+func NewServer(manager jobStarter, planner planner, plans store.PlanStore, disc discoverer, logSvc *logs.Service, logger *log.Logger) http.Handler {
 	mux := http.NewServeMux()
 	registerUIRoutes(mux)
 
@@ -136,6 +142,21 @@ func NewServer(manager jobStarter, planner planner, plans store.PlanStore, disc 
 		}
 
 		writeJSON(w, http.StatusOK, job)
+	})
+
+	mux.HandleFunc("POST /api/v1/jobs/{id}/cancel", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		if id == "" {
+			http.NotFound(w, r)
+			return
+		}
+
+		if !manager.CancelJob(id) {
+			writeError(w, http.StatusNotFound, errors.New("job not found or already finished"))
+			return
+		}
+
+		writeJSON(w, http.StatusOK, map[string]string{"status": "cancelling", "id": id})
 	})
 
 	// --- Azure discovery ---
@@ -280,6 +301,129 @@ func NewServer(manager jobStarter, planner planner, plans store.PlanStore, disc 
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"deleted": id})
+	})
+
+	// --- AI Chat ---
+	mux.HandleFunc("POST /api/v1/ai/chat", func(w http.ResponseWriter, r *http.Request) {
+		chatSvc, ok := planner.(chatter)
+		if !ok || planner == nil {
+			writeError(w, http.StatusServiceUnavailable, errors.New("ai chat is not configured"))
+			return
+		}
+
+		var body struct {
+			Messages []ai.ChatMessage `json:"messages"`
+		}
+		if err := decodeJSONBody(r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		if len(body.Messages) == 0 {
+			writeError(w, http.StatusBadRequest, errors.New("messages array must not be empty"))
+			return
+		}
+
+		reply, err := chatSvc.Chat(r.Context(), body.Messages)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"reply": reply})
+	})
+
+	// --- Operator Log Analysis ---
+	mux.HandleFunc("GET /api/v1/jobs/{id}/logs", func(w http.ResponseWriter, r *http.Request) {
+		if logSvc == nil {
+			writeError(w, http.StatusServiceUnavailable, errors.New("log analysis is not configured"))
+			return
+		}
+		id := r.PathValue("id")
+		if id == "" {
+			http.NotFound(w, r)
+			return
+		}
+		summary, err := logSvc.GetJobLogSummary(id)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, summary)
+	})
+
+	mux.HandleFunc("GET /api/v1/jobs/{id}/logs/{operator}", func(w http.ResponseWriter, r *http.Request) {
+		if logSvc == nil {
+			writeError(w, http.StatusServiceUnavailable, errors.New("log analysis is not configured"))
+			return
+		}
+		id := r.PathValue("id")
+		operator := r.PathValue("operator")
+		if id == "" || operator == "" {
+			http.NotFound(w, r)
+			return
+		}
+
+		level := r.URL.Query().Get("level")
+		resource := r.URL.Query().Get("resource")
+		entries, err := logSvc.GetOperatorLogsFiltered(id, operator, level, resource, 0)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		if entries == nil {
+			entries = []logs.LogEntry{}
+		}
+		writeJSON(w, http.StatusOK, entries)
+	})
+
+	mux.HandleFunc("POST /api/v1/jobs/{id}/logs/collect", func(w http.ResponseWriter, r *http.Request) {
+		if logSvc == nil {
+			writeError(w, http.StatusServiceUnavailable, errors.New("log analysis is not configured"))
+			return
+		}
+		id := r.PathValue("id")
+		if id == "" {
+			http.NotFound(w, r)
+			return
+		}
+		job, ok := manager.GetJob(id)
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+
+		resourceTypes := job.Summary.ResourceKinds
+		if len(resourceTypes) == 0 {
+			resourceTypes = []string{"e2e"}
+		}
+
+		var sinceTime, untilTime *time.Time
+		if job.StartedAt != nil {
+			sinceTime = job.StartedAt
+		}
+		if job.FinishedAt != nil {
+			untilTime = job.FinishedAt
+		}
+
+		summary, err := logSvc.CollectForJob(r.Context(), id, resourceTypes, sinceTime, untilTime)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, summary)
+	})
+
+	// --- Operator Registry ---
+	mux.HandleFunc("GET /api/v1/operators", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, logs.AllOperators())
+	})
+
+	mux.HandleFunc("GET /api/v1/operators/for-resources", func(w http.ResponseWriter, r *http.Request) {
+		types := strings.Split(r.URL.Query().Get("types"), ",")
+		ops := logs.OperatorsForResources(types)
+		if ops == nil {
+			ops = []string{}
+		}
+		writeJSON(w, http.StatusOK, ops)
 	})
 
 	if logger != nil {

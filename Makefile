@@ -1,4 +1,4 @@
-.PHONY: bootstrap run build test clean help
+.PHONY: bootstrap run stop build test clean help web-build web-dev
 
 # Detect OS for cross-platform support
 UNAME := $(shell uname -s 2>/dev/null || echo Windows)
@@ -24,7 +24,10 @@ help:
 	@echo "  make run          — Start the server on :8080"
 	@echo ""
 	@echo "Development:"
-	@echo "  make build        — Compile the server binary"
+	@echo "  make stop         — Stop the server running on :8080"
+	@echo "  make build        — Build frontend + compile Go binary"
+	@echo "  make web-build    — Build the React frontend only"
+	@echo "  make web-dev      — Start Vite dev server (hot reload)"
 	@echo "  make test         — Run all unit tests"
 	@echo "  make clean        — Remove build artifacts and data"
 	@echo "  make seed         — Re-seed embeddings only (skips existing)"
@@ -50,13 +53,32 @@ seed:
 	@go run ./cmd/bootstrap
 
 ## run: Start the server
-run:
+run: web-build
 	@go run ./cmd/server
 
+## stop: Stop the server running on :8080
+stop:
+	@echo "==> Stopping server on :8080..."
+	@lsof -ti :8080 | xargs kill -9 2>/dev/null || true
+	@echo "==> Server stopped."
+
 ## build: Compile the server binary
-build:
+build: web-build
 	@go build -o bin/$(BINARY)$(BINARY_EXT) ./cmd/server
 	@echo "Binary built: bin/$(BINARY)$(BINARY_EXT)"
+
+## web-build: Build the React frontend and copy to embed directory
+web-build:
+	@echo "==> Building React frontend..."
+	@cd web && npm install --silent && npm run build
+	@rm -rf internal/api/ui
+	@mkdir -p internal/api/ui
+	@cp -r web/dist/* internal/api/ui/
+	@echo "==> Frontend built and copied to internal/api/ui/"
+
+## web-dev: Start Vite dev server (proxies API to :8080)
+web-dev:
+	@cd web && npm run dev
 
 ## test: Run all tests
 test:
@@ -70,5 +92,6 @@ lint:
 ## clean: Remove build artifacts and database
 clean:
 	@rm -rf bin/
+	@rm -rf web/node_modules web/dist
 	@echo "Cleaned build artifacts."
 	@echo "To also remove the database: rm -rf data/"
