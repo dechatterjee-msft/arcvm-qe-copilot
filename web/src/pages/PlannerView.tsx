@@ -248,16 +248,16 @@ export default function PlannerView() {
     if (!validateAzureTarget()) return;
 
     const rr = { ...runRequest, caseId, description: runRequest.description || store.allCases.find(c => c.caseId === caseId)?.objective || '' };
+    store.clearCaseStatus(caseId);
     store.setRunningJob(caseId, null);
 
     try {
       const { id: jobId } = await api.submitProvisionJob(rr);
       store.setRunningJob(caseId, jobId);
-      store.setStatus(`Started job ${jobId} for ${caseId}.`, 'success');
       startPolling(caseId, jobId);
     } catch (err: unknown) {
       store.clearRunningJob(caseId);
-      store.setStatus(`Run failed for ${caseId}: ${(err as Error)?.message || 'Unknown'}`, 'error');
+      store.setCaseStatus(caseId, `Run failed: ${(err as Error)?.message || 'Unknown'}`, 'error');
     }
   }
 
@@ -269,18 +269,18 @@ export default function PlannerView() {
         if (st === 'succeeded' || st === 'completed') {
           clearInterval(iv); pollIntervals.current.delete(caseId);
           store.clearRunningJob(caseId);
+          store.clearCaseStatus(caseId);
           store.setCompletedJob(caseId, jobId, job);
-          store.setStatus(`${caseId} completed successfully.`, 'success');
         } else if (st === 'cancelled') {
           clearInterval(iv); pollIntervals.current.delete(caseId);
           store.clearRunningJob(caseId);
+          store.clearCaseStatus(caseId);
           store.setCompletedJob(caseId, jobId, job);
-          store.setStatus(`${caseId} was cancelled.`, 'error');
         } else if (st === 'failed' || st === 'error') {
           clearInterval(iv); pollIntervals.current.delete(caseId);
           store.clearRunningJob(caseId);
+          store.clearCaseStatus(caseId);
           store.setCompletedJob(caseId, jobId, job);
-          store.setStatus(`${caseId} failed.${job.error ? ` ${job.error}` : ''}`, 'error');
         } else {
           // Still running – update completed data so FR re-renders with live progress
           store.setCompletedJob(caseId, jobId, job);
@@ -381,6 +381,7 @@ export default function PlannerView() {
     try {
       const data = await api.getPlan(id);
       if (data.cases?.length) {
+        store.clearAllCaseStatuses();
         store.setAllCases(data.cases);
         store.clearAllAcceptance();
         store.setModel(data.model || '');
@@ -398,7 +399,7 @@ export default function PlannerView() {
   }
 
   /* ─── Derived state ──────────────────────────────────── */
-  const { allCases, currentPage, acceptedCommands, initialCommands, runningJobs, completedJobData, selectedResourceTypes, generating } = store;
+  const { allCases, currentPage, acceptedCommands, initialCommands, runningJobs, completedJobData, caseStatuses, selectedResourceTypes, generating } = store;
   const isAllSelected = selectedResourceTypes.has('e2e');
   const primaryType = isAllSelected ? 'e2e' : [...selectedResourceTypes][0] || 'lnet';
   const meta = resourceMeta[primaryType];
@@ -425,96 +426,195 @@ export default function PlannerView() {
   const pageStart = (page - 1) * PAGE_SIZE;
   const pageCases = allCases.slice(pageStart, pageStart + PAGE_SIZE);
   const depthLabels: Record<number, string> = { 4: 'Quick', 8: 'Standard', 12: 'Thorough' };
+  const promptDetail = store.prompt.length < 60 ? 'Concise' : store.prompt.length < 180 ? 'Good detail' : 'Detailed';
+  const resourceSummary = isAllSelected ? 'End-to-end' : selectedResourceTypes.size > 0 ? `${selectedResourceTypes.size} selected` : 'Choose scope';
+  const attachmentSummary = store.uploadedFiles.length === 0 ? 'Optional' : `${store.uploadedFiles.length}/${MAX_FILES} attached`;
+  const contextReady = Boolean(store.baseEnvelope.subscriptionId && store.baseEnvelope.resourceGroup && store.baseEnvelope.customLocationId);
+  const contextProgress = [store.baseEnvelope.subscriptionId, store.baseEnvelope.resourceGroup, store.baseEnvelope.customLocationId].filter(Boolean).length;
+  const selectedResourceLabels = isAllSelected
+    ? ['End-to-end coverage']
+    : [...selectedResourceTypes].map(type => resourceMeta[type].label.replace(/ \(.*/, ''));
 
   return (
     <>
-      {/* Azure Target Bar */}
-      <div className="azure-target-bar">
-        {renderPicker('Subscription', subItems, subLabel, subOpen, setSubOpen, subSearch, setSubSearch, selectSub, false, subLoading)}
-        {renderPicker('Resource Group', rgItems, rgLabel, rgOpen, setRgOpen, rgSearch, setRgSearch, selectRg, rgDisabled, false)}
-        {renderPicker('Custom Location', clItems, clLabel, clOpen, setClOpen, clSearch, setClSearch, selectCl, clDisabled, false)}
-      </div>
-      {validationError && (
-        <div className="azure-validation-error">{validationError}</div>
-      )}
+      <section className="surface context-shell">
+        <div className="context-shell-head">
+          <div>
+            <span className="section-label">Azure Context</span>
+            <h2>Target environment</h2>
+            <p>Select the Azure scope used by plan generation and execution.</p>
+          </div>
+          <span className="context-required">Required before generate or run</span>
+        </div>
+
+        <div className="azure-target-bar">
+          {renderPicker('Subscription', subItems, subLabel, subOpen, setSubOpen, subSearch, setSubSearch, selectSub, false, subLoading)}
+          {renderPicker('Resource Group', rgItems, rgLabel, rgOpen, setRgOpen, rgSearch, setRgSearch, selectRg, rgDisabled, false)}
+          {renderPicker('Custom Location', clItems, clLabel, clOpen, setClOpen, clSearch, setClSearch, selectCl, clDisabled, false)}
+        </div>
+        {validationError && (
+          <div className="azure-validation-error">{validationError}</div>
+        )}
+      </section>
 
       <div className={`split-layout${allCases.length > 0 ? ' has-results' : ''}`}>
         {/* ─── Composer ────────────────────────────────────── */}
         <section className="surface composer">
           <div className="composer-top">
-            <div className="composer-actions">
-              <div className="depth-picker">
-                <span className="field-label"><span>Depth</span><span className="field-hint">{store.caseCount} cases</span></span>
-                <div className="depth-toggle">
-                  {[4, 8, 12].map(n => (
-                    <button key={n} type="button" className={`depth-btn${store.caseCount === n ? ' active' : ''}`} onClick={() => store.setCaseCount(n)}>
-                      {depthLabels[n]}
+            <div>
+              <span className="section-label">Test Case Generator</span>
+              <h2>Ask the planner for test cases</h2>
+              <p>Write the scenario the way you would brief an operator. Keep the prompt natural, then use scope, depth, and files only where they sharpen the draft.</p>
+            </div>
+            <div className="planner-hero-pills">
+              <span className={`planner-hero-pill ${contextReady ? 'ready' : 'warning'}`}>
+                {contextReady ? 'Azure context ready' : `${contextProgress}/3 context fields selected`}
+              </span>
+              <span className="planner-hero-pill">{resourceSummary}</span>
+              <span className="planner-hero-pill">{store.caseCount} planned</span>
+            </div>
+          </div>
+
+          <div className="composer-stack">
+            <div className="planner-studio">
+              <div className="prompt-shell">
+                <div className="prompt-shell-head">
+                  <div className="prompt-shell-copy">
+                    <div className="prompt-shell-kicker">Planner Prompt</div>
+                    <div className="prompt-shell-title">What should the planner generate?</div>
+                    <p className="prompt-shell-description">Describe the scenario, failure modes, constraints, or success criteria. The planner will turn it into CLI-backed cases you can inspect, edit, and run.</p>
+                  </div>
+                  <div className="prompt-signals prompt-signals-top">
+                    <span className="prompt-signal">{promptDetail}</span>
+                    <span className="prompt-signal">{store.prompt.length} chars</span>
+                  </div>
+                </div>
+
+                <div className="prompt-context-strip">
+                  <span className={`prompt-context-pill ${contextReady ? 'ready' : 'warning'}`}>
+                    {contextReady ? 'Ready to generate' : 'Context required before generate or run'}
+                  </span>
+                  <span className="prompt-context-pill">Depth: {depthLabels[store.caseCount]}</span>
+                  <span className="prompt-context-pill">Coverage: {resourceSummary}</span>
+                  <span className="prompt-context-pill">Files: {attachmentSummary}</span>
+                </div>
+
+                <textarea
+                  id="prompt"
+                  ref={promptRef}
+                  className="strategy-input"
+                  value={store.prompt}
+                  onChange={e => store.setPrompt(e.target.value)}
+                  placeholder={meta.placeholder}
+                />
+
+                <div className="prompt-footer">
+                  <div className="prompt-footer-copy">
+                    <div className="prompt-signals">
+                      <span className="prompt-signal">Use Cmd/Ctrl + Enter to generate</span>
+                      <span className="prompt-signal">{meta.label}</span>
+                    </div>
+                    {selectedResourceLabels.length > 0 && (
+                      <div className="selection-strip">
+                        {selectedResourceLabels.map(label => (
+                          <span key={label} className="selection-chip">{label}</span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="prompt-footer-actions">
+                    <button className="primary-btn composer-generate-btn" disabled={generating} onClick={generate}>
+                      {generating ? 'Generating...' : 'Generate Plan'}
                     </button>
-                  ))}
+                  </div>
                 </div>
               </div>
-              <button className="primary-btn" disabled={generating} onClick={generate}>
-                {generating ? 'Generating...' : 'Generate Test Cases'}
-              </button>
+
+              <div className="planner-sidecar">
+                <div className="control-card depth-card">
+                  <div className="control-card-head">
+                    <span className="control-card-title">Depth</span>
+                    <span className="field-hint">{store.caseCount} cases</span>
+                  </div>
+                  <div className="depth-picker">
+                    <p className="control-card-copy">Choose how wide the first draft should go before you refine individual cases.</p>
+                    <div className="depth-toggle">
+                      {[4, 8, 12].map(n => (
+                        <button key={n} type="button" className={`depth-btn${store.caseCount === n ? ' active' : ''}`} onClick={() => store.setCaseCount(n)}>
+                          {depthLabels[n]}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="control-card resource-card">
+                  <div className="control-card-head">
+                    <span className="control-card-title">Resource coverage</span>
+                    <span className="field-hint">{resourceSummary}</span>
+                  </div>
+                  <div className="resource-card-stack">
+                    <p className="control-card-copy">Pick the Azure Local surfaces the planner should cover. Keep it narrow for focused prompts.</p>
+                    <div className="resource-checkboxes resource-checkboxes-compact">
+                      <label className="resource-checkbox">
+                        <input type="checkbox" checked={isAllSelected} onChange={() => store.selectAllResourceTypes()} />
+                        <span>Select All (E2E)</span>
+                      </label>
+                      {RESOURCE_TABS.filter(t => t !== 'e2e').map(tab => (
+                        <label key={tab} className="resource-checkbox">
+                          <input
+                            type="checkbox"
+                            checked={isAllSelected || selectedResourceTypes.has(tab)}
+                            onChange={() => store.toggleResourceType(tab)}
+                          />
+                          <span>{resourceMeta[tab].label.replace(/ \(.*/, '')}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="control-card attach-card">
+                  <div className="control-card-head">
+                    <span className="control-card-title">Reference files</span>
+                    <span className="field-hint">{attachmentSummary}</span>
+                  </div>
+                  <p className="control-card-copy">Attach specs, logs, or existing runbooks when the planner needs concrete context.</p>
+                  <div className="file-upload-zone" onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); handleFiles(e.dataTransfer.files); }}>
+                    <input type="file" multiple accept=".json,.yaml,.yml,.txt,.md,.log,.csv,.xml,.toml,.sh,.ps1,.go,.py" onChange={e => { handleFiles(e.target.files); e.target.value = ''; }} />
+                    <div className="upload-label"><strong>Drop files</strong> or click to attach source material</div>
+                  </div>
+                  {store.uploadedFiles.length > 0 && (
+                    <div className="file-chips">
+                      {store.uploadedFiles.map((f, i) => (
+                        <span key={f.name} className="file-chip">
+                          {f.name} <span className="file-size">({(f.size / 1024).toFixed(1)} KB)</span>
+                          <button type="button" className="remove-file" onClick={() => store.removeFile(i)}>&times;</button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
-          </div>
 
-          <div className="resource-tab-label">Resource Types</div>
-          <div className="resource-checkboxes">
-            <label className="resource-checkbox">
-              <input type="checkbox" checked={isAllSelected} onChange={() => store.selectAllResourceTypes()} />
-              <span>Select All (E2E)</span>
-            </label>
-            {RESOURCE_TABS.filter(t => t !== 'e2e').map(tab => (
-              <label key={tab} className="resource-checkbox">
-                <input
-                  type="checkbox"
-                  checked={isAllSelected || selectedResourceTypes.has(tab)}
-                  onChange={() => store.toggleResourceType(tab)}
-                />
-                <span>{resourceMeta[tab].label.replace(/ \(.*/, '')}</span>
-              </label>
-            ))}
-          </div>
-
-          <label htmlFor="prompt">
-            <span className="field-label">
-              <span>Strategy Prompt</span>
-              <span className="field-hint">{store.prompt.length < 60 ? 'Concise' : store.prompt.length < 180 ? 'Good detail' : 'Detailed'}</span>
-            </span>
-          </label>
-          <textarea
-            id="prompt"
-            ref={promptRef}
-            value={store.prompt}
-            onChange={e => store.setPrompt(e.target.value)}
-            placeholder={meta.placeholder}
-          />
-
-          <div className="prompt-footer"><span>Use Cmd/Ctrl + Enter to generate.</span></div>
-
-          <div className="file-upload-zone" onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); handleFiles(e.dataTransfer.files); }}>
-            <input type="file" multiple accept=".json,.yaml,.yml,.txt,.md,.log,.csv,.xml,.toml,.sh,.ps1,.go,.py" onChange={e => { handleFiles(e.target.files); e.target.value = ''; }} />
-            <div className="upload-label"><strong>Drop files</strong> or click to attach context</div>
-          </div>
-          {store.uploadedFiles.length > 0 && (
-            <div className="file-chips">
-              {store.uploadedFiles.map((f, i) => (
-                <span key={f.name} className="file-chip">
-                  {f.name} <span className="file-size">({(f.size / 1024).toFixed(1)} KB)</span>
-                  <button type="button" className="remove-file" onClick={() => store.removeFile(i)}>&times;</button>
-                </span>
-              ))}
+            <div className="prompt-library">
+              <div className="prompt-library-head">
+                <div className="prompt-library-copy">
+                  <span className="control-card-title">Starter prompts</span>
+                  <p>Use one as a first turn, then rewrite it in your own words.</p>
+                </div>
+                <span className="field-hint">{mergedQuickPrompts.length} suggestions</span>
+              </div>
+              <div className="quick-prompts">
+                {mergedQuickPrompts.map((qp, i) => (
+                  <button key={`${qp.tag}-${qp.label}-${i}`} type="button" className="chip" onClick={() => { store.setPrompt(qp.prompt); promptRef.current?.focus(); }}>
+                    <strong>{qp.tag ? `${qp.tag}: ${qp.label}` : qp.label}</strong>
+                    <span>{qp.desc}</span>
+                  </button>
+                ))}
+              </div>
             </div>
-          )}
-
-          <div className="quick-prompts">
-            {mergedQuickPrompts.map((qp, i) => (
-              <button key={`${qp.tag}-${qp.label}-${i}`} type="button" className="chip" onClick={() => { store.setPrompt(qp.prompt); promptRef.current?.focus(); }}>
-                <strong>{qp.tag ? `${qp.tag}: ${qp.label}` : qp.label}</strong>
-                <span>{qp.desc}</span>
-              </button>
-            ))}
           </div>
 
           {allCases.length === 0 && !generating && store.status && (
@@ -525,9 +625,9 @@ export default function PlannerView() {
 
           {allCases.length === 0 && !generating && (
             <details className="saved-plans" style={{ marginTop: 16 }}>
-              <summary>Saved Plans</summary>
+              <summary>Saved plan library</summary>
               <div className="saved-plans-list">
-                {savedPlans.length === 0 && <p style={{ color: '#8aa3ae', fontSize: '0.82rem', textAlign: 'center', padding: '12px 0' }}>No saved plans yet.</p>}
+                {savedPlans.length === 0 && <p className="saved-plans-empty">No saved plans yet.</p>}
                 {savedPlans.map(p => (
                   <div key={p.id} className="saved-plan-row">
                     <span className="plan-name">{p.name}</span>
@@ -547,8 +647,8 @@ export default function PlannerView() {
           <div className="results-top">
             <div>
               <span className="section-label">Generated Plan</span>
-              <h2>Cases and command flows</h2>
-              <p>Review, edit, and accept only the command sets you want to keep.</p>
+              <h2>Review the drafted cases</h2>
+              <p>Edit the proposed execution flows, accept the ones you trust, and run them from the same workspace.</p>
             </div>
             <span className="run-meta">
               {`${allCases.length} cases${elapsed ? ` • ${elapsed}s` : ''}`}
@@ -581,6 +681,7 @@ export default function PlannerView() {
                 <button type="button" className="secondary-btn danger-btn" onClick={() => {
                   store.setAllCases([]);
                   store.clearAllAcceptance();
+                  store.clearAllCaseStatuses();
                   setGenInfo([]);
                   setElapsed('');
                   setBulkRunStatus('');
@@ -617,6 +718,7 @@ export default function PlannerView() {
               const isAccepted = acceptedCommands.has(caseId);
               const isRunning = runningJobs.has(caseId);
               const completed = completedJobData.get(caseId);
+              const caseStatus = caseStatuses.get(caseId) || null;
               const commands = isAccepted ? acceptedCommands.get(caseId)! : (initialCommands.get(caseId) || buildRelevantAzCliCommands(runRequest).join('\n'));
 
               let runStatusText = '';
@@ -630,6 +732,9 @@ export default function PlannerView() {
                 const cssClass = st === 'cancelled' ? 'cancelled' : (st === 'failed' || st === 'error') ? 'failed' : 'succeeded';
                 runStatusText = `Job ${completed.jobId}: ${cssClass}${completed.job.error && cssClass !== 'succeeded' ? ` — ${completed.job.error}` : ''}`;
                 runStatusClass = `visible ${cssClass}`;
+              } else if (caseStatus) {
+                runStatusText = caseStatus.text;
+                runStatusClass = `visible ${caseStatus.tone === 'success' ? 'succeeded' : caseStatus.tone === 'error' ? 'failed' : ''}`.trim();
               }
 
               return (
@@ -692,9 +797,9 @@ export default function PlannerView() {
           )}
 
           <details className="saved-plans">
-            <summary>Saved Plans</summary>
+            <summary>Saved plan library</summary>
             <div className="saved-plans-list">
-              {savedPlans.length === 0 && <p style={{ color: '#8aa3ae', fontSize: '0.82rem', textAlign: 'center', padding: '12px 0' }}>No saved plans yet.</p>}
+              {savedPlans.length === 0 && <p className="saved-plans-empty">No saved plans yet.</p>}
               {savedPlans.map(p => (
                 <div key={p.id} className="saved-plan-row">
                   <span className="plan-name">{p.name}</span>
@@ -759,69 +864,71 @@ function CaseCard({ caseId, globalIndex, testCase, commands, isAccepted, isRunni
 
   return (
     <article className={`result${isAccepted ? ' is-accepted' : ''}${collapsed ? ' collapsed' : ''}`}>
-      <div className="result-head" onClick={() => setCollapsed(c => !c)} style={{ cursor: 'pointer' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <div className="result-head" onClick={() => setCollapsed(c => !c)}>
+        <div className="case-title-group">
           {collapsed ? <ChevronRight size={16} className="collapse-chevron" /> : <ChevronDown size={16} className="collapse-chevron" />}
           <div>
-            <span className="case-tag">Generated Case {globalIndex + 1}</span>
+            <span className="case-tag">Draft Case {globalIndex + 1}</span>
             <h3>{caseId}</h3>
           </div>
         </div>
         <div className="case-pills">
+          {isAccepted && <span className="case-pill accepted">Accepted</span>}
           {pills.map((p, i) => <span key={i} className="case-pill">{p}</span>)}
           {collapsed && runStatusText && <span className={`case-pill ${runStatusClass.includes('succeeded') ? 'pass' : runStatusClass.includes('failed') ? 'fail' : ''}`}>{isRunning ? 'Running' : completedData ? (completedData.job.status || '').toLowerCase() : ''}</span>}
         </div>
       </div>
 
       {!collapsed && (
-        <>      <div className="result-grid">
-        <article className="meta-card"><strong>Objective</strong><span>{testCase.objective || '-'}</span></article>
-        <article className="meta-card"><strong>Mutation</strong><span>{testCase.mutation || '-'}</span></article>
-        <article className="meta-card"><strong>Expected</strong><span>{testCase.expectedOutcome || '-'}</span></article>
-      </div>
-
-      {citations.length > 0 && (
-        <div className="citation-row">
-          {citations.map((c, i) => <span key={i} className="citation-pill">{c}</span>)}
-        </div>
-      )}
-
-      <section className="command-shell">
-        <div className="command-head">
-          <div>
-            <strong>Azure CLI flow</strong>
-            <span>Edit before accepting if you need to refine the run.</span>
+        <>
+          <div className="result-grid">
+            <article className="meta-card meta-card-wide"><strong>Objective</strong><span>{testCase.objective || '-'}</span></article>
+            <article className="meta-card"><strong>Mutation</strong><span>{testCase.mutation || '-'}</span></article>
+            <article className="meta-card"><strong>Expected</strong><span>{testCase.expectedOutcome || '-'}</span></article>
           </div>
-          <div className="command-actions">
-            <button type="button" className={`secondary-btn run-btn${isRunning ? ' running' : ''}`} disabled={isRunning} onClick={onRun}>
-              {isRunning ? 'Running...' : 'Run'}
-            </button>
-            {isRunning && (
-              <button type="button" className="secondary-btn stop-btn visible" onClick={onStop}>Stop</button>
+
+          {citations.length > 0 && (
+            <div className="citation-row">
+              {citations.map((c, i) => <span key={i} className="citation-pill">{c}</span>)}
+            </div>
+          )}
+
+          <section className="command-shell">
+            <div className="command-head">
+              <div className="command-copy">
+                <strong>Execution draft</strong>
+                <span>Review the proposed Azure CLI flow, then accept or run it when it looks right.</span>
+              </div>
+              <div className="command-actions">
+                <button type="button" className={`secondary-btn run-btn${isRunning ? ' running' : ''}`} disabled={isRunning} onClick={onRun}>
+                  {isRunning ? 'Running...' : 'Run'}
+                </button>
+                {isRunning && (
+                  <button type="button" className="secondary-btn stop-btn visible" onClick={onStop}>Stop</button>
+                )}
+                <button type="button" className="secondary-btn" onClick={onRefine}>Refine</button>
+                <button type="button" className={`secondary-btn${isAccepted ? ' accepted' : ''}`} onClick={() => onAccept(editorValue)}>
+                  {isAccepted ? 'Accepted' : 'Accept'}
+                </button>
+                <button type="button" className="secondary-btn" onClick={() => { setEditorValue(initialCommands); onReset(); }}>Reset</button>
+                <button type="button" className="secondary-btn" onClick={() => onCopy(editorValue)}>Copy</button>
+              </div>
+            </div>
+            <textarea
+              className="cli-editor"
+              value={editorValue}
+              onChange={e => {
+                setEditorValue(e.target.value);
+                if (isAccepted) onClearAcceptance();
+              }}
+            />
+            {runStatusText && (
+              <div className={`run-status ${runStatusClass}`}>{runStatusText}</div>
             )}
-            <button type="button" className="secondary-btn" onClick={onRefine}>Refine</button>
-            <button type="button" className={`secondary-btn${isAccepted ? ' accepted' : ''}`} onClick={() => onAccept(editorValue)}>
-              {isAccepted ? 'Accepted' : 'Accept'}
-            </button>
-            <button type="button" className="secondary-btn" onClick={() => { setEditorValue(initialCommands); onReset(); }}>Reset</button>
-            <button type="button" className="secondary-btn" onClick={() => onCopy(editorValue)}>Copy</button>
-          </div>
-        </div>
-        <textarea
-          className="cli-editor"
-          value={editorValue}
-          onChange={e => {
-            setEditorValue(e.target.value);
-            if (isAccepted) onClearAcceptance();
-          }}
-        />
-        {runStatusText && (
-          <div className={`run-status ${runStatusClass}`}>{runStatusText}</div>
-        )}
-        {completedData && (
-          <FlightRecorder jobId={completedData.jobId} job={completedData.job} />
-        )}
-      </section>
+            {completedData && (
+              <FlightRecorder jobId={completedData.jobId} job={completedData.job} />
+            )}
+          </section>
         </>
       )}
     </article>

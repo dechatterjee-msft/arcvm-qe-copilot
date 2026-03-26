@@ -100,7 +100,7 @@ export default function RunsView() {
   // Scroll chat to bottom
   useEffect(() => {
     if (chatMessagesRef.current) chatMessagesRef.current.scrollTop = chatMessagesRef.current.scrollHeight;
-  }, [store.selectedJobId, store.chatHistoryMap]);
+  }, [store.selectedJobId, store.chatHistoryMap, chatBusy]);
 
   async function selectJob(jobId: string) {
     try {
@@ -146,8 +146,9 @@ export default function RunsView() {
     if (selectedOperator && store.selectedJobId) loadOperatorLogs(selectedOperator);
   }, [logLevelFilter, logResourceFilter]);
 
-  async function sendChat() {
-    const text = chatInput.trim();
+  async function submitChat(rawText: string) {
+    const text = rawText.trim();
+    if (chatBusy) return;
     if (!text || !store.selectedJob || !store.selectedJobId) return;
     setChatInput('');
     store.pushChatMessage(store.selectedJobId, { role: 'user', content: text });
@@ -164,27 +165,53 @@ export default function RunsView() {
     setChatBusy(false);
   }
 
+  function sendChat() {
+    void submitChat(chatInput);
+  }
+
   const { jobs, selectedJobId, selectedJob } = store;
   const chatHistory = selectedJobId ? store.getChatHistory(selectedJobId) : [];
+  const visibleChatHistory = chatHistory.filter(m => m.role !== 'system');
+  const jobLabel = selectedJob?.caseId || selectedJobId?.substring(0, 12) || 'this run';
+  const advisorSuggestions = selectedJob
+    ? [
+        {
+          label: 'Root Cause',
+          prompt: `Summarize the most likely root cause for ${jobLabel} and point me to the first failing command or strongest signal.`,
+        },
+        {
+          label: 'Fix Plan',
+          prompt: `Give me the top remediation steps for ${jobLabel}, ordered by likelihood and impact.`,
+        },
+        {
+          label: 'Command Walkthrough',
+          prompt: `Walk me through the key commands and actions in ${jobLabel}, and explain where the run deviated.`,
+        },
+        {
+          label: 'Operator Signals',
+          prompt: `Review the operator signals for ${jobLabel} and tell me what they imply about the failure or success of the run.`,
+        },
+      ]
+    : [];
 
   // Build meta entries
   const meta: [string, string][] = [];
   if (selectedJob) {
     if (selectedJob.description) meta.push(['Description', selectedJob.description]);
-    if (selectedJob.type) meta.push(['Type', selectedJob.type]);
     if (selectedJob.submittedAt) meta.push(['Submitted', new Date(selectedJob.submittedAt).toLocaleString()]);
     if (selectedJob.startedAt) meta.push(['Started', new Date(selectedJob.startedAt).toLocaleString()]);
     if (selectedJob.finishedAt) meta.push(['Finished', new Date(selectedJob.finishedAt).toLocaleString()]);
     if (selectedJob.startedAt && selectedJob.finishedAt) meta.push(['Duration', `${((new Date(selectedJob.finishedAt).getTime() - new Date(selectedJob.startedAt).getTime()) / 1000).toFixed(1)}s`]);
-    if (selectedJob.summary?.resourceGroup) meta.push(['Resource Group', selectedJob.summary.resourceGroup]);
-    if (selectedJob.summary?.resourceKinds?.length) meta.push(['Resources', selectedJob.summary.resourceKinds.join(', ')]);
   }
 
   return (
     <div className="runs-layout">
       {/* Sidebar */}
       <section className="surface runs-sidebar">
-        <h3>Test Cases</h3>
+        <div className="panel-header">
+          <span className="section-label">Execution History</span>
+          <h3>Test cases</h3>
+        </div>
         <div className="run-list">
           {jobs.length === 0 && <div className="runs-empty">No test cases yet. Run a test case from the Planner.</div>}
           {jobs.map(job => {
@@ -221,15 +248,18 @@ export default function RunsView() {
         ) : (() => {
           const st = (selectedJob.status || '').toLowerCase();
           return (
-          <div>
+          <div className="runs-detail-content">
             <div className="run-detail-head">
-              <h3>{selectedJob.caseId || selectedJobId?.substring(0, 12)}</h3>
+              <div>
+                <span className="section-label">Run Details</span>
+                <h3>{selectedJob.caseId || selectedJobId?.substring(0, 12)}</h3>
+              </div>
               <span className={`run-detail-badge ${st}`}>{st}</span>
             </div>
 
             <dl className="run-detail-meta">
               {meta.map(([k, v]) => (
-                <div key={k}><dt>{k}</dt><dd>{v}</dd></div>
+                <div key={k} className={k === 'Description' ? 'wide' : ''}><dt>{k}</dt><dd>{v}</dd></div>
               ))}
             </dl>
 
@@ -238,14 +268,16 @@ export default function RunsView() {
             )}
 
             {selectedJobId && (
-              <FlightRecorder jobId={selectedJobId} job={selectedJob} showEmpty style={{ display: 'block', borderTop: 'none' }} />
+              <FlightRecorder jobId={selectedJobId} job={selectedJob} showEmpty style={{ display: 'block' }} />
             )}
 
             {/* Operator Log Analysis */}
             <div className="operator-logs-panel">
-              <h4>
-                <FileText size={16} />
-                Operator Logs
+              <div className="subpanel-head">
+                <h4>
+                  <FileText size={16} />
+                  Operator logs
+                </h4>
                 <button
                   type="button"
                   className="collect-logs-btn"
@@ -254,7 +286,7 @@ export default function RunsView() {
                 >
                   {logCollecting ? 'Collecting...' : 'Collect Logs'}
                 </button>
-              </h4>
+              </div>
 
               {allOperators.length > 0 && (
                 <div className="operator-tabs">
@@ -304,19 +336,30 @@ export default function RunsView() {
                   ) : operatorEntries.length === 0 ? (
                     <div className="log-empty">No log entries match.</div>
                   ) : (
-                    <div className="log-entries">
-                      {operatorEntries.slice(0, 200).map((entry, i) => (
-                        <div key={i} className={`log-entry level-${entry.level}`}>
-                          <span className="log-ts">{entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString() : '--'}</span>
-                          <span className={`log-level ${entry.level}`}>{entry.level.toUpperCase()}</span>
-                          {entry.controller && <span className="log-ctrl">[{entry.controller}]</span>}
-                          {entry.resource && <span className="log-res">{entry.resource}</span>}
-                          <span className="log-msg">{entry.message}</span>
-                        </div>
-                      ))}
-                      {operatorEntries.length > 200 && (
-                        <div className="log-truncated">Showing 200 of {operatorEntries.length} entries</div>
-                      )}
+                    <div className="log-table">
+                      <div className="log-table-head">
+                        <span>Time</span>
+                        <span>Level</span>
+                        <span>Origin</span>
+                        <span>Message</span>
+                      </div>
+                      <div className="log-entries">
+                        {operatorEntries.slice(0, 200).map((entry, i) => (
+                          <div key={i} className={`log-entry level-${entry.level}`}>
+                            <span className="log-ts">{entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString() : '--'}</span>
+                            <span className={`log-level ${entry.level}`}>{entry.level.toUpperCase()}</span>
+                            <span className="log-origin">
+                              {entry.controller && <span className="log-ctrl">{entry.controller}</span>}
+                              {entry.resource && <span className="log-res">{entry.resource}</span>}
+                              {!entry.controller && !entry.resource && <span className="log-ctrl">system</span>}
+                            </span>
+                            <span className="log-msg">{entry.message}</span>
+                          </div>
+                        ))}
+                        {operatorEntries.length > 200 && (
+                          <div className="log-truncated">Showing 200 of {operatorEntries.length} entries</div>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -333,33 +376,92 @@ export default function RunsView() {
 
             {/* Chat Panel */}
             <div className="chat-panel">
-              <h4>
-                <Info size={16} />
-                Advisor
-              </h4>
-              <div className="chat-messages" ref={chatMessagesRef}>
-                {chatHistory.length === 0 && (
-                  <div className="chat-msg system-hint">Ask about this job's failures, suggest fixes, or compare results.</div>
-                )}
-                {chatHistory.filter(m => m.role !== 'system').map((m, i) => (
-                  <div key={i} className={`chat-msg ${m.role}`}>
-                    {m.role === 'assistant' ? <Markdown>{m.content}</Markdown> : m.content}
-                  </div>
-                ))}
+              <div className="chat-panel-head">
+                <div className="chat-panel-title">
+                  <Info size={16} />
+                  <h4>Advisor</h4>
+                </div>
+                <div className="chat-status-meta">
+                  <span className={`chat-status-dot${chatBusy ? ' busy' : ''}`} />
+                  <span>{chatBusy ? 'Analyzing this run' : 'Ready for run-aware questions'}</span>
+                </div>
               </div>
-              <div className="chat-input-row">
-                <textarea
-                  className="chat-input"
-                  value={chatInput}
-                  onChange={e => setChatInput(e.target.value)}
-                  placeholder="Ask about this job failure..."
-                  rows={1}
-                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); } }}
-                />
-                <button type="button" className="chat-send-btn" disabled={chatBusy} onClick={sendChat}>
-                  <Send size={14} />
-                  Send
-                </button>
+
+              <div className="chat-surface">
+                <div className="chat-messages" ref={chatMessagesRef}>
+                  {visibleChatHistory.length === 0 && (
+                    <div className="chat-empty-state">
+                      <span className="chat-empty-kicker">Run-aware assistant</span>
+                      <h5>Ask about this execution</h5>
+                      <p>Start with a quick prompt below or ask your own question. The advisor already has this run's commands, status, and failure context.</p>
+                      <div className="chat-empty-actions">
+                        {advisorSuggestions.map((item) => (
+                          <button
+                            key={item.label}
+                            type="button"
+                            className="chat-shortcut"
+                            disabled={chatBusy}
+                            onClick={() => { void submitChat(item.prompt); }}
+                          >
+                            {item.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {visibleChatHistory.map((m, i) => (
+                    <div key={i} className={`chat-row ${m.role}`}>
+                      <div className={`chat-avatar ${m.role}`}>{m.role === 'assistant' ? 'AI' : 'You'}</div>
+                      <div className="chat-message">
+                        <div className="chat-meta">
+                          <span className="chat-author">{m.role === 'assistant' ? 'Advisor' : 'You'}</span>
+                          <span className="chat-meta-sep">•</span>
+                          <span className="chat-meta-note">{m.role === 'assistant' ? 'Run-aware analysis' : 'Prompt'}</span>
+                        </div>
+                        <div className={`chat-msg ${m.role}`}>
+                          {m.role === 'assistant' ? <Markdown>{m.content}</Markdown> : m.content}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  {chatBusy && (
+                    <div className="chat-row assistant live">
+                      <div className="chat-avatar assistant">AI</div>
+                      <div className="chat-message">
+                        <div className="chat-meta">
+                          <span className="chat-author">Advisor</span>
+                          <span className="chat-meta-sep">•</span>
+                          <span className="chat-meta-note">Thinking</span>
+                        </div>
+                        <div className="chat-msg assistant typing">
+                          <span className="typing-dots">
+                            <span className="typing-dot" />
+                            <span className="typing-dot" />
+                            <span className="typing-dot" />
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="chat-composer">
+                  <textarea
+                    className="chat-input"
+                    value={chatInput}
+                    onChange={e => setChatInput(e.target.value)}
+                    placeholder="Ask what failed, what to retry, or what the logs imply..."
+                    rows={1}
+                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); } }}
+                  />
+                  <div className="chat-input-row">
+                    <span className="chat-composer-hint">Enter to send · Shift+Enter for newline</span>
+                    <button type="button" className="chat-send-btn" disabled={chatBusy || !chatInput.trim()} onClick={sendChat}>
+                      <Send size={14} />
+                      Send
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
           </div>

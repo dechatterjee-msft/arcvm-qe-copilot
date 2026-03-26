@@ -49,11 +49,62 @@ interface CmdGroup {
 }
 
 export function buildRelevantAzCliCommands(runRequest: RunRequest): string[] {
-  const resources = runRequest?.resources || {};
+  const rawResources = runRequest?.resources || {};
   const rg = runRequest?.resourceGroup || '<resource-group>';
   const location = runRequest?.location || '<location>';
   const customLocation = runRequest?.customLocationId || '<custom-location-id>';
 
+  // Normalize: plural array keys → multiple singular entries
+  // e.g. { logicalNetworks: [{...}, {...}] } → calls builder for each item
+  const pluralToSingular: Record<string, string> = {
+    logicalNetworks: 'logicalNetwork',
+    networkInterfaces: 'networkInterface',
+    networkSecurityGroups: 'networkSecurityGroup',
+    storagePaths: 'storagePath',
+    storageContainers: 'storageContainer',
+    galleryImages: 'galleryImage',
+    virtualMachines: 'virtualMachine',
+    virtualHardDisks: 'virtualHardDisk',
+  };
+
+  const allItems: Record<string, unknown>[] = [];
+  const baseResources: Record<string, Record<string, unknown>> = {};
+
+  for (const [key, value] of Object.entries(rawResources)) {
+    const singularKey = pluralToSingular[key];
+    if (singularKey && Array.isArray(value)) {
+      for (const item of value) {
+        if (item && typeof item === 'object') allItems.push({ ...item, _resourceType: singularKey });
+      }
+    } else if (value && typeof value === 'object' && !Array.isArray(value)) {
+      baseResources[key] = value as Record<string, unknown>;
+    }
+  }
+
+  // If plural arrays were found, build CLI commands for each item individually and combine
+  if (allItems.length > 0) {
+    const allLines: string[] = [];
+    // First process any singular resources normally
+    if (Object.keys(baseResources).length > 0) {
+      const baseCmds = buildRelevantAzCliCommands({ ...runRequest, resources: baseResources });
+      if (baseCmds.length > 0 && !baseCmds[0].startsWith('# Resource definition')) {
+        allLines.push(...baseCmds, '');
+      }
+    }
+    // Then process each array item
+    for (const item of allItems) {
+      const type = item._resourceType as string;
+      const { _resourceType, ...spec } = item;
+      const itemCmds = buildRelevantAzCliCommands({ ...runRequest, resources: { [type]: spec } });
+      if (itemCmds.length > 0 && !itemCmds[0].startsWith('# Resource definition')) {
+        allLines.push(...itemCmds, '');
+      }
+    }
+    while (allLines.length > 0 && allLines[allLines.length - 1] === '') allLines.pop();
+    return allLines.length > 0 ? allLines : ['# Resource definition (JSON)', JSON.stringify(rawResources, null, 2)];
+  }
+
+  const resources = rawResources;
   const cmdGroups: CmdGroup[] = [];
 
   // Storage Path

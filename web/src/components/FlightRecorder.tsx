@@ -94,7 +94,7 @@ export default function FlightRecorder({ jobId, job, showEmpty, style }: FlightR
 
   if (allActions.length === 0) {
     if (showEmpty) {
-      return <div style={{ color: 'var(--muted)', fontSize: '0.84rem', padding: '16px 0', textAlign: 'center' }}>No execution data yet.</div>;
+      return <div className="fr-empty">No execution data yet.</div>;
     }
     return null;
   }
@@ -137,7 +137,8 @@ export default function FlightRecorder({ jobId, job, showEmpty, style }: FlightR
       <div className="fr-header">
         <div className="fr-title">
           <PlayCircle size={14} />
-          Flight Recorder — {jobId.substring(0, 12)}
+          <span>Execution timeline</span>
+          <span className="fr-job-id">{jobId.substring(0, 12)}</span>
           <span className={`fr-badge ${badgeClass}`}>{badgeText}</span>
         </div>
         <span className="fr-elapsed">{totalSec}s</span>
@@ -188,10 +189,10 @@ export default function FlightRecorder({ jobId, job, showEmpty, style }: FlightR
                     );
                   })}
                   {action.error && !action.success && (
-                    <div className="fr-step" style={{ borderColor: 'rgba(248,113,113,0.2)' }}>
+                    <div className="fr-step fr-step-error">
                       <div className="fr-step-head">
                         <span className="fr-step-indicator fail" />
-                        <span className="fr-step-cmd" style={{ color: '#fca5a5' }}>Error: {action.error}</span>
+                        <span className="fr-step-cmd fr-step-cmd-error">Error: {action.error}</span>
                       </div>
                     </div>
                   )}

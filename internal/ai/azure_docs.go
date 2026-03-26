@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"log"
 	"net/http"
 	"regexp"
 	"strings"
@@ -31,7 +32,12 @@ func fetchDocumentFromAzureDocs(ctx context.Context, source AzureDocsSource) (st
 	if err != nil {
 		return "", "", fmt.Errorf("fetch azure docs page: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+			log.Printf("close azure docs response body: %v", err)
+		}
+	}(resp.Body)
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 6<<20))
 	if err != nil {

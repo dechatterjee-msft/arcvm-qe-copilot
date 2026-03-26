@@ -25,6 +25,7 @@ export interface PlannerState {
   /* Execution */
   runningJobs: Map<string, string | null>;
   completedJobData: Map<string, { jobId: string; job: Job }>;
+  caseStatuses: Map<string, { text: string; tone: 'neutral' | 'error' | 'success' }>;
   bulkRunMode: 'parallel' | 'sequential';
   /* Azure target */
   baseEnvelope: BaseEnvelope;
@@ -52,6 +53,9 @@ export interface PlannerActions {
   setRunningJob(caseId: string, jobId: string | null): void;
   clearRunningJob(caseId: string): void;
   setCompletedJob(caseId: string, jobId: string, job: Job): void;
+  setCaseStatus(caseId: string, text: string, tone?: 'neutral' | 'error' | 'success'): void;
+  clearCaseStatus(caseId: string): void;
+  clearAllCaseStatuses(): void;
   setBulkRunMode(m: 'parallel' | 'sequential'): void;
   setBaseEnvelope(partial: Partial<BaseEnvelope>): void;
   addFile(f: { name: string; size: number; content: string }): void;
@@ -71,6 +75,7 @@ export const usePlannerStore = create<PlannerState & PlannerActions>((set, get) 
   initialCommands: new Map(),
   runningJobs: new Map(),
   completedJobData: new Map(),
+  caseStatuses: new Map(),
   bulkRunMode: 'parallel',
   baseEnvelope: {
     subscriptionId: '',
@@ -114,6 +119,17 @@ export const usePlannerStore = create<PlannerState & PlannerActions>((set, get) 
   setRunningJob: (caseId, jobId) => set((s) => { const m = new Map(s.runningJobs); m.set(caseId, jobId); return { runningJobs: m }; }),
   clearRunningJob: (caseId) => set((s) => { const m = new Map(s.runningJobs); m.delete(caseId); return { runningJobs: m }; }),
   setCompletedJob: (caseId, jobId, job) => set((s) => { const m = new Map(s.completedJobData); m.set(caseId, { jobId, job }); return { completedJobData: m }; }),
+  setCaseStatus: (caseId, text, tone = 'neutral') => set((s) => {
+    const m = new Map(s.caseStatuses);
+    m.set(caseId, { text, tone });
+    return { caseStatuses: m };
+  }),
+  clearCaseStatus: (caseId) => set((s) => {
+    const m = new Map(s.caseStatuses);
+    m.delete(caseId);
+    return { caseStatuses: m };
+  }),
+  clearAllCaseStatuses: () => set({ caseStatuses: new Map() }),
   setBulkRunMode: (m) => set({ bulkRunMode: m }),
   setBaseEnvelope: (partial) => set((s) => ({ baseEnvelope: { ...s.baseEnvelope, ...partial } })),
   addFile: (f) =>

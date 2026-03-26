@@ -46,32 +46,6 @@ func TestLongevityRequiresIterationsOrDuration(t *testing.T) {
 	}
 }
 
-func TestNICRequiresNetworkRefWhenNoLogicalNetworkIsProvided(t *testing.T) {
-	req := validRequest()
-	req.Resources.LogicalNetwork = nil
-	req.Resources.NetworkInterface.NetworkRef = ""
-	if err := req.Validate("provision"); err == nil {
-		t.Fatal("expected validation to fail when nic has no network reference")
-	}
-}
-
-func TestNICRequiresNetworkRefWhenMultipleLogicalNetworksExist(t *testing.T) {
-	req := validRequest()
-	req.Resources.LogicalNetworks = []LogicalNetworkSpec{
-		{
-			Name:          "test-lnet-b",
-			AddressPrefix: "10.1.0.0/24",
-			IPPoolStart:   "10.1.0.10",
-			IPPoolEnd:     "10.1.0.20",
-			VMSwitchName:  "ConvergedSwitch",
-		},
-	}
-	req.Resources.NetworkInterface.NetworkRef = ""
-	if err := req.Validate("provision"); err == nil {
-		t.Fatal("expected validation to fail when nic has no networkRef and multiple lnets exist")
-	}
-}
-
 func validRequest() *RunRequest {
 	return &RunRequest{
 		SubscriptionID:   "00000000-0000-0000-0000-000000000000",

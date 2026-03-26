@@ -215,52 +215,6 @@ func (r *RunRequest) Validate(jobType string) error {
 		return fmt.Errorf("at least one resource definition is required")
 	}
 
-	logicalNetworks := r.Resources.AllLogicalNetworks()
-	networkInterfaces := r.Resources.AllNetworkInterfaces()
-
-	for _, logicalNetwork := range logicalNetworks {
-		switch {
-		case logicalNetwork.Name == "":
-			return fmt.Errorf("resources.logicalNetwork.name is required")
-		case logicalNetwork.AddressPrefix == "":
-			return fmt.Errorf("resources.logicalNetwork.addressPrefix is required")
-		case logicalNetwork.IPPoolStart == "":
-			return fmt.Errorf("resources.logicalNetwork.ipPoolStart is required")
-		case logicalNetwork.IPPoolEnd == "":
-			return fmt.Errorf("resources.logicalNetwork.ipPoolEnd is required")
-		case logicalNetwork.VMSwitchName == "":
-			return fmt.Errorf("resources.logicalNetwork.vmSwitchName is required")
-		}
-	}
-
-	lnetNames := make(map[string]struct{}, len(logicalNetworks))
-	for _, logicalNetwork := range logicalNetworks {
-		if _, exists := lnetNames[logicalNetwork.Name]; exists {
-			return fmt.Errorf("duplicate logical network name %q", logicalNetwork.Name)
-		}
-		lnetNames[logicalNetwork.Name] = struct{}{}
-	}
-
-	for _, nic := range networkInterfaces {
-		if nic.Name == "" {
-			return fmt.Errorf("resources.networkInterface.name is required")
-		}
-		if nic.NetworkRef == "" && len(logicalNetworks) == 0 {
-			return fmt.Errorf("resources.networkInterface.networkRef is required when no logical network is supplied")
-		}
-		if nic.NetworkRef == "" && len(logicalNetworks) > 1 {
-			return fmt.Errorf("resources.networkInterface.networkRef is required when multiple logical networks are supplied")
-		}
-	}
-
-	nicNames := make(map[string]struct{}, len(networkInterfaces))
-	for _, nic := range networkInterfaces {
-		if _, exists := nicNames[nic.Name]; exists {
-			return fmt.Errorf("duplicate network interface name %q", nic.Name)
-		}
-		nicNames[nic.Name] = struct{}{}
-	}
-
 	if r.Longevity.Interval != "" {
 		if _, err := time.ParseDuration(r.Longevity.Interval); err != nil {
 			return fmt.Errorf("invalid longevity.interval: %w", err)
