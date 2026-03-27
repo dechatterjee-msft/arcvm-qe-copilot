@@ -48,6 +48,19 @@ export const resourceMeta: Record<string, ResourceMeta> = {
     ],
     baseline: { name: 'qe-nsg-test', rules: [{ name: 'allow-ssh', priority: 100, direction: 'Inbound', access: 'Allow', protocol: 'Tcp', destinationPortRange: '22' }] },
   },
+  nsr: {
+    label: 'Network Security Rule',
+    key: 'networkSecurityRule',
+    docsUrl: 'https://learn.microsoft.com/en-us/azure/azure-local/manage/manage-network-security-groups?view=azloc-2602&tabs=azurecli',
+    placeholder: 'Test standalone NSG rule operations: add rules to existing NSGs, priority conflicts, direction/protocol validation, port range edge cases, and rule CRUD lifecycle',
+    quickPrompts: [
+      { label: 'Priority Conflicts', desc: 'Duplicate priorities and ordering edge cases.', prompt: 'I want to test NSG rule priority conflicts, duplicate priority values, and ordering behavior when multiple rules target the same traffic' },
+      { label: 'Port Ranges', desc: 'Invalid, overlapping, and wildcard port ranges.', prompt: 'I want to test invalid port ranges, overlapping destination ports, wildcard port rules, and multi-port range handling' },
+      { label: 'Direction & Access', desc: 'Inbound/Outbound with Allow/Deny combinations.', prompt: 'I want to test all combinations of direction (Inbound/Outbound) and access (Allow/Deny) with different protocols and verify rule enforcement' },
+      { label: 'Lifecycle', desc: 'Create, update, and delete rules on an existing NSG.', prompt: 'I want to test standalone rule lifecycle: adding rules to an existing NSG, updating rule properties, deleting rules, and verifying NSG state after each operation' },
+    ],
+    baseline: { name: 'qe-nsr-allow-http', nsgRef: 'qe-nsg-test', priority: 200, direction: 'Inbound', access: 'Allow', protocol: 'Tcp', destinationPortRange: '80' },
+  },
   storagepath: {
     label: 'Storage Path',
     key: 'storagePath',

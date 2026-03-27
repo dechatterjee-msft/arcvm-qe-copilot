@@ -10,6 +10,27 @@ import type { TestCase, Job, RunRequest } from '../types';
 const PAGE_SIZE = 4;
 const MAX_FILE_SIZE = 512 * 1024;
 const MAX_FILES = 10;
+const DEFAULT_PLANNER_META = {
+  label: 'Select resource coverage',
+  placeholder: 'Describe the Azure Local scenario, failure modes, constraints, and success criteria you want the planner to cover. Then choose the resource types you want included.',
+  quickPrompts: [
+    {
+      label: 'Admission',
+      desc: 'Validate input rejection, required fields, and clear error messaging.',
+      prompt: 'I want to test admission failures, invalid required fields, and operator-facing rejection messages across the selected Azure Local resources',
+    },
+    {
+      label: 'Lifecycle',
+      desc: 'Create, inspect, repeat, and clean up safely.',
+      prompt: 'I want to test resource lifecycle including creation, verification, repeated runs, and cleanup safety under partial failure',
+    },
+    {
+      label: 'Dependencies',
+      desc: 'Cross-resource order, references, and protection checks.',
+      prompt: 'I want to test cross-resource dependency handling, invalid references, ordering constraints, and cleanup behavior',
+    },
+  ],
+} as const;
 
 /* ─── Clipboard helper ─────────────────────────────────── */
 async function copyText(text: string): Promise<boolean> {
@@ -401,14 +422,15 @@ export default function PlannerView() {
   /* ─── Derived state ──────────────────────────────────── */
   const { allCases, currentPage, acceptedCommands, initialCommands, runningJobs, completedJobData, caseStatuses, selectedResourceTypes, generating } = store;
   const isAllSelected = selectedResourceTypes.has('e2e');
-  const primaryType = isAllSelected ? 'e2e' : [...selectedResourceTypes][0] || 'lnet';
-  const meta = resourceMeta[primaryType];
+  const primaryType = isAllSelected ? 'e2e' : ([...selectedResourceTypes][0] as keyof typeof resourceMeta | undefined);
+  const meta = primaryType ? resourceMeta[primaryType] : DEFAULT_PLANNER_META;
 
   // Merge quick prompts from all selected resource types (deduplicated by label, tagged with resource)
   const mergedQuickPrompts = (() => {
     if (isAllSelected) return resourceMeta['e2e'].quickPrompts.map(qp => ({ ...qp, tag: 'E2E' }));
     const types = [...selectedResourceTypes];
-    if (types.length <= 1) return (resourceMeta[types[0] || 'lnet']?.quickPrompts || []).map(qp => ({ ...qp, tag: '' }));
+    if (types.length === 0) return DEFAULT_PLANNER_META.quickPrompts.map(qp => ({ ...qp, tag: '' }));
+    if (types.length === 1) return (resourceMeta[types[0]]?.quickPrompts || []).map(qp => ({ ...qp, tag: '' }));
     const prompts: { label: string; desc: string; prompt: string; tag: string }[] = [];
     for (const t of types) {
       const rm = resourceMeta[t];

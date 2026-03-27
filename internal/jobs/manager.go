@@ -342,6 +342,12 @@ func resourceKinds(request *spec.RunRequest) []string {
 	if len(request.Resources.AllNetworkInterfaces()) > 0 {
 		kinds = append(kinds, "networkInterface")
 	}
+	if request.Resources.NetworkSecurityGroup != nil {
+		kinds = append(kinds, "networkSecurityGroup")
+	}
+	if len(request.Resources.AllNetworkSecurityRules()) > 0 {
+		kinds = append(kinds, "networkSecurityRule")
+	}
 	return kinds
 }
 

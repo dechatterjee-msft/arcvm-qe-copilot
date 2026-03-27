@@ -28,12 +28,14 @@ type Resources struct {
 	NetworkInterface  *NetworkInterfaceSpec  `json:"networkInterface,omitempty"`
 	NetworkInterfaces []NetworkInterfaceSpec `json:"networkInterfaces,omitempty"`
 
-	NetworkSecurityGroup *NetworkSecurityGroupSpec `json:"networkSecurityGroup,omitempty"`
-	StoragePath          *StoragePathSpec          `json:"storagePath,omitempty"`
-	VirtualMachine       *VirtualMachineSpec       `json:"virtualMachine,omitempty"`
-	VirtualHardDisk      *VirtualHardDiskSpec      `json:"virtualHardDisk,omitempty"`
-	StorageContainer     *StorageContainerSpec     `json:"storageContainer,omitempty"`
-	GalleryImage         *GalleryImageSpec         `json:"galleryImage,omitempty"`
+	NetworkSecurityGroup  *NetworkSecurityGroupSpec  `json:"networkSecurityGroup,omitempty"`
+	NetworkSecurityRule   *NetworkSecurityRuleSpec   `json:"networkSecurityRule,omitempty"`
+	NetworkSecurityRules  []NetworkSecurityRuleSpec  `json:"networkSecurityRules,omitempty"`
+	StoragePath           *StoragePathSpec           `json:"storagePath,omitempty"`
+	VirtualMachine        *VirtualMachineSpec        `json:"virtualMachine,omitempty"`
+	VirtualHardDisk       *VirtualHardDiskSpec       `json:"virtualHardDisk,omitempty"`
+	StorageContainer      *StorageContainerSpec      `json:"storageContainer,omitempty"`
+	GalleryImage          *GalleryImageSpec          `json:"galleryImage,omitempty"`
 }
 
 // UnmarshalJSON handles LLM responses that return singular fields (logicalNetwork,
@@ -47,12 +49,14 @@ func (r *Resources) UnmarshalJSON(data []byte) error {
 		NetworkInterface  json.RawMessage        `json:"networkInterface,omitempty"`
 		NetworkInterfaces []NetworkInterfaceSpec `json:"networkInterfaces,omitempty"`
 
-		NetworkSecurityGroup *NetworkSecurityGroupSpec `json:"networkSecurityGroup,omitempty"`
-		StoragePath          *StoragePathSpec          `json:"storagePath,omitempty"`
-		VirtualMachine       *VirtualMachineSpec       `json:"virtualMachine,omitempty"`
-		VirtualHardDisk      *VirtualHardDiskSpec      `json:"virtualHardDisk,omitempty"`
-		StorageContainer     *StorageContainerSpec     `json:"storageContainer,omitempty"`
-		GalleryImage         *GalleryImageSpec         `json:"galleryImage,omitempty"`
+		NetworkSecurityGroup  *NetworkSecurityGroupSpec  `json:"networkSecurityGroup,omitempty"`
+		NetworkSecurityRule   json.RawMessage            `json:"networkSecurityRule,omitempty"`
+		NetworkSecurityRules  []NetworkSecurityRuleSpec  `json:"networkSecurityRules,omitempty"`
+		StoragePath           *StoragePathSpec           `json:"storagePath,omitempty"`
+		VirtualMachine        *VirtualMachineSpec        `json:"virtualMachine,omitempty"`
+		VirtualHardDisk       *VirtualHardDiskSpec       `json:"virtualHardDisk,omitempty"`
+		StorageContainer      *StorageContainerSpec      `json:"storageContainer,omitempty"`
+		GalleryImage          *GalleryImageSpec          `json:"galleryImage,omitempty"`
 	}
 
 	var raw rawResources
@@ -96,9 +100,28 @@ func (r *Resources) UnmarshalJSON(data []byte) error {
 		}
 	}
 
+	// networkSecurityRule: accept object or array
+	if len(raw.NetworkSecurityRule) > 0 {
+		trimmed := strings.TrimSpace(string(raw.NetworkSecurityRule))
+		if strings.HasPrefix(trimmed, "[") {
+			var arr []NetworkSecurityRuleSpec
+			if err := json.Unmarshal(raw.NetworkSecurityRule, &arr); err != nil {
+				return fmt.Errorf("networkSecurityRule: %w", err)
+			}
+			r.NetworkSecurityRules = append(r.NetworkSecurityRules, arr...)
+		} else {
+			var single NetworkSecurityRuleSpec
+			if err := json.Unmarshal(raw.NetworkSecurityRule, &single); err != nil {
+				return fmt.Errorf("networkSecurityRule: %w", err)
+			}
+			r.NetworkSecurityRule = &single
+		}
+	}
+
 	// Copy the remaining fields directly.
 	r.LogicalNetworks = append(r.LogicalNetworks, raw.LogicalNetworks...)
 	r.NetworkInterfaces = append(r.NetworkInterfaces, raw.NetworkInterfaces...)
+	r.NetworkSecurityRules = append(r.NetworkSecurityRules, raw.NetworkSecurityRules...)
 	r.NetworkSecurityGroup = raw.NetworkSecurityGroup
 	r.StoragePath = raw.StoragePath
 	r.VirtualMachine = raw.VirtualMachine
@@ -140,6 +163,19 @@ type NetworkSecurityGroupSpec struct {
 
 type SecurityRuleSpec struct {
 	Name                     string `json:"name"`
+	Priority                 int    `json:"priority"`
+	Direction                string `json:"direction"`
+	Access                   string `json:"access"`
+	Protocol                 string `json:"protocol"`
+	SourceAddressPrefix      string `json:"sourceAddressPrefix,omitempty"`
+	DestinationAddressPrefix string `json:"destinationAddressPrefix,omitempty"`
+	SourcePortRange          string `json:"sourcePortRange,omitempty"`
+	DestinationPortRange     string `json:"destinationPortRange,omitempty"`
+}
+
+type NetworkSecurityRuleSpec struct {
+	Name                     string `json:"name"`
+	NSGRef                   string `json:"nsgRef"`
 	Priority                 int    `json:"priority"`
 	Direction                string `json:"direction"`
 	Access                   string `json:"access"`
@@ -255,6 +291,8 @@ func (r Resources) IsEmpty() bool {
 		r.NetworkInterface == nil &&
 		len(r.NetworkInterfaces) == 0 &&
 		r.NetworkSecurityGroup == nil &&
+		r.NetworkSecurityRule == nil &&
+		len(r.NetworkSecurityRules) == 0 &&
 		r.StoragePath == nil &&
 		r.VirtualMachine == nil &&
 		r.VirtualHardDisk == nil &&
@@ -277,6 +315,15 @@ func (r Resources) AllNetworkInterfaces() []NetworkInterfaceSpec {
 		out = append(out, *r.NetworkInterface)
 	}
 	out = append(out, r.NetworkInterfaces...)
+	return out
+}
+
+func (r Resources) AllNetworkSecurityRules() []NetworkSecurityRuleSpec {
+	out := make([]NetworkSecurityRuleSpec, 0, len(r.NetworkSecurityRules)+1)
+	if r.NetworkSecurityRule != nil {
+		out = append(out, *r.NetworkSecurityRule)
+	}
+	out = append(out, r.NetworkSecurityRules...)
 	return out
 }
 

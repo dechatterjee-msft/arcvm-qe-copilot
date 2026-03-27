@@ -60,6 +60,7 @@ export function buildRelevantAzCliCommands(runRequest: RunRequest): string[] {
     logicalNetworks: 'logicalNetwork',
     networkInterfaces: 'networkInterface',
     networkSecurityGroups: 'networkSecurityGroup',
+    networkSecurityRules: 'networkSecurityRule',
     storagePaths: 'storagePath',
     storageContainers: 'storageContainer',
     galleryImages: 'galleryImage',
@@ -207,6 +208,33 @@ export function buildRelevantAzCliCommands(runRequest: RunRequest): string[] {
       }
     }
     cmdGroups.push({ label: 'Network Security Group', create: [...create, ...ruleLines], show: `az stack-hci-vm network nsg show --resource-group ${shellQuote(rg)} --name ${shellQuote(name)}`, del: `az stack-hci-vm network nsg delete --resource-group ${shellQuote(rg)} --name ${shellQuote(name)} --yes` });
+  }
+
+  // Network Security Rule (standalone)
+  const nsr = resources.networkSecurityRule as Record<string, unknown> | undefined;
+  if (nsr) {
+    const ruleName = String(nsr.name || '<rule-name>');
+    const nsgName = String(nsr.nsgRef || '<nsg-name>');
+    const create = [
+      'az stack-hci-vm network nsg rule create',
+      `  --resource-group ${shellQuote(rg)}`,
+      `  --nsg-name ${shellQuote(nsgName)}`,
+      `  --name ${shellQuote(ruleName)}`,
+    ];
+    if (nsr.priority) create.push(`  --priority ${shellQuote(String(nsr.priority))}`);
+    if (nsr.direction) create.push(`  --direction ${shellQuote(String(nsr.direction))}`);
+    if (nsr.access) create.push(`  --access ${shellQuote(String(nsr.access))}`);
+    if (nsr.protocol) create.push(`  --protocol ${shellQuote(String(nsr.protocol))}`);
+    if (nsr.sourceAddressPrefix) create.push(`  --source-address-prefixes ${shellQuote(String(nsr.sourceAddressPrefix))}`);
+    if (nsr.destinationAddressPrefix) create.push(`  --destination-address-prefixes ${shellQuote(String(nsr.destinationAddressPrefix))}`);
+    if (nsr.sourcePortRange) create.push(`  --source-port-ranges ${shellQuote(String(nsr.sourcePortRange))}`);
+    if (nsr.destinationPortRange) create.push(`  --destination-port-ranges ${shellQuote(String(nsr.destinationPortRange))}`);
+    cmdGroups.push({
+      label: 'Network Security Rule',
+      create,
+      show: `az stack-hci-vm network nsg rule show --resource-group ${shellQuote(rg)} --nsg-name ${shellQuote(nsgName)} --name ${shellQuote(ruleName)}`,
+      del: `az stack-hci-vm network nsg rule delete --resource-group ${shellQuote(rg)} --nsg-name ${shellQuote(nsgName)} --name ${shellQuote(ruleName)} --yes`,
+    });
   }
 
   // NIC

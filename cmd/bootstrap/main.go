@@ -25,6 +25,7 @@ var seedDocsURLs = []struct {
 	{"Logical Networks", "https://learn.microsoft.com/en-us/azure/azure-local/manage/create-logical-networks?view=azloc-2602&tabs=azurecli"},
 	{"Network Interfaces", "https://learn.microsoft.com/en-us/azure/azure-local/manage/create-network-interfaces?view=azloc-2602&tabs=azurecli"},
 	{"Network Security Groups", "https://learn.microsoft.com/en-us/azure/azure-local/manage/manage-network-security-groups?view=azloc-2602&tabs=azurecli"},
+	{"Network Security Rules", "https://learn.microsoft.com/en-us/azure/azure-local/manage/manage-network-security-groups?view=azloc-2602&tabs=azurecli"},
 	{"Storage Paths", "https://learn.microsoft.com/en-us/azure/azure-local/manage/create-storage-path?view=azloc-2602&tabs=azurecli"},
 	{"Virtual Machines", "https://learn.microsoft.com/en-us/azure/azure-local/manage/create-arc-virtual-machines?view=azloc-2602&tabs=azurecli"},
 	{"Virtual Hard Disks", "https://learn.microsoft.com/en-us/azure/azure-local/manage/virtual-hard-disks?view=azloc-2602&tabs=azurecli"},
