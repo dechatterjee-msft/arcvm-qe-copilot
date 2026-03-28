@@ -42,6 +42,7 @@ export interface PlannerActions {
   setCaseCount(n: number): void;
   toggleResourceType(tab: string): void;
   selectAllResourceTypes(): void;
+  setSelectedResourceTypes(types: string[]): void;
   setAllCases(cases: TestCase[]): void;
   setCurrentPage(n: number): void;
   setModel(m: string): void;
@@ -59,13 +60,15 @@ export interface PlannerActions {
   setBulkRunMode(m: 'parallel' | 'sequential'): void;
   setBaseEnvelope(partial: Partial<BaseEnvelope>): void;
   addFile(f: { name: string; size: number; content: string }): void;
+  setUploadedFiles(files: { name: string; size: number; content: string }[]): void;
   removeFile(idx: number): void;
+  resetPlannerDraft(): void;
   setStatus(text: string, tone?: 'neutral' | 'error' | 'success'): void;
   setGenerating(v: boolean): void;
 }
 
 export const usePlannerStore = create<PlannerState & PlannerActions>((set, get) => ({
-  prompt: 'I want to test admission failures, overlap behavior, immutability, and cleanup safety with operator-ready CLI flows',
+  prompt: '',
   caseCount: 8,
   selectedResourceTypes: new Set<string>(),
   allCases: [],
@@ -100,6 +103,7 @@ export const usePlannerStore = create<PlannerState & PlannerActions>((set, get) 
     return { selectedResourceTypes: next };
   }),
   selectAllResourceTypes: () => set({ selectedResourceTypes: new Set(['e2e']) }),
+  setSelectedResourceTypes: (types) => set({ selectedResourceTypes: new Set(types) }),
   setAllCases: (cases) => set({ allCases: cases, currentPage: 1 }),
   setCurrentPage: (n) => set({ currentPage: n }),
   setModel: (m) => set({ model: m }),
@@ -138,7 +142,27 @@ export const usePlannerStore = create<PlannerState & PlannerActions>((set, get) 
       if (s.uploadedFiles.some((x) => x.name === f.name)) return s;
       return { uploadedFiles: [...s.uploadedFiles, f] };
     }),
+  setUploadedFiles: (files) => set({ uploadedFiles: files.slice(0, 10) }),
   removeFile: (idx) => set((s) => ({ uploadedFiles: s.uploadedFiles.filter((_, i) => i !== idx) })),
+  resetPlannerDraft: () => set((s) => ({
+    prompt: '',
+    caseCount: 8,
+    selectedResourceTypes: new Set<string>(),
+    allCases: [],
+    currentPage: 1,
+    model: '',
+    acceptedCommands: new Map(),
+    initialCommands: new Map(),
+    runningJobs: new Map(),
+    completedJobData: new Map(),
+    caseStatuses: new Map(),
+    bulkRunMode: 'parallel',
+    uploadedFiles: [],
+    status: 'Planner ready. Describe the behavior you want to pressure-test.',
+    statusTone: 'success',
+    generating: false,
+    baseEnvelope: s.baseEnvelope,
+  })),
   setStatus: (text, tone = 'neutral') => set({ status: text, statusTone: tone }),
   setGenerating: (v) => set({ generating: v }),
 }));

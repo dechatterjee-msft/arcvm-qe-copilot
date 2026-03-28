@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronRight, Plus } from 'lucide-react';
 import { usePlannerStore, buildDefaultBaseline, buildDefaultLayers } from '../store';
 import { resourceMeta, RESOURCE_TABS } from '../resourceMeta';
 import * as api from '../api';
@@ -39,6 +39,71 @@ async function copyText(text: string): Promise<boolean> {
 
 /* ─── Azure Picker Item ────────────────────────────────── */
 interface PickerItem { value: string; label: string; sub?: string; location?: string }
+interface UploadedFile { name: string; size: number; content: string }
+interface PlannerChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  createdAt: string;
+}
+interface PlannerConversationThread {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  messages: PlannerChatMessage[];
+  snapshot: {
+    prompt: string;
+    caseCount: number;
+    selectedResourceTypes: string[];
+    uploadedFiles: UploadedFile[];
+    allCases: TestCase[];
+    model: string;
+  };
+}
+
+const PLANNER_CONVERSATIONS_KEY = 'planner_conversations_v1';
+const PLANNER_ACTIVE_CONVERSATION_KEY = 'planner_active_conversation_v1';
+
+function makeId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  return `planner-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function buildConversationTitle(prompt: string, messages: PlannerChatMessage[]) {
+  const firstUserMessage = messages.find(message => message.role === 'user')?.content.trim();
+  const source = firstUserMessage || prompt.trim();
+  if (!source) return 'New planner chat';
+  return source.length > 48 ? `${source.slice(0, 48).trim()}...` : source;
+}
+
+function buildConversationPreview(thread: PlannerConversationThread) {
+  const latestMessage = [...thread.messages]
+    .reverse()
+    .find(message => message.role === 'user' || message.role === 'assistant')?.content.trim();
+  const source = latestMessage || thread.snapshot.prompt.trim();
+  if (!source) return 'Start a new planner conversation';
+  return source.length > 92 ? `${source.slice(0, 92).trim()}...` : source;
+}
+
+function createPlannerThread(): PlannerConversationThread {
+  const now = new Date().toISOString();
+  return {
+    id: makeId(),
+    title: 'New planner chat',
+    createdAt: now,
+    updatedAt: now,
+    messages: [],
+    snapshot: {
+      prompt: '',
+      caseCount: 8,
+      selectedResourceTypes: [],
+      uploadedFiles: [],
+      allCases: [],
+      model: '',
+    },
+  };
+}
 
 /* ─── Component ────────────────────────────────────────── */
 export default function PlannerView() {
@@ -55,6 +120,9 @@ export default function PlannerView() {
   const [bulkRunTone, setBulkRunTone] = useState<'running' | 'done' | ''>('');
   const [bulkRunBusy, setBulkRunBusy] = useState(false);
   const [validationError, setValidationError] = useState('');
+  const [plannerThreads, setPlannerThreads] = useState<PlannerConversationThread[]>([]);
+  const [activeThreadId, setActiveThreadId] = useState('');
+  const [chatMessages, setChatMessages] = useState<PlannerChatMessage[]>([]);
 
   // Azure pickers
   const [subItems, setSubItems] = useState<PickerItem[]>([]);
@@ -76,6 +144,8 @@ export default function PlannerView() {
   // Refs for running jobs polling
   const pollIntervals = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
   const promptRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const threadInitRef = useRef(false);
 
   // Load subscriptions on mount
   useEffect(() => {
@@ -192,6 +262,13 @@ export default function PlannerView() {
     if (!validateAzureTarget()) return;
     const prompt = store.prompt.trim();
     if (!prompt) { store.setStatus('Add a prompt so the planner knows what to target.', 'error'); return; }
+    const userMessage: PlannerChatMessage = {
+      id: makeId(),
+      role: 'user',
+      content: prompt,
+      createdAt: new Date().toISOString(),
+    };
+    setChatMessages(prev => [...prev, userMessage]);
 
     const isRefine = refineTarget !== null;
     const refineCaseId = refineTarget;
@@ -233,6 +310,12 @@ export default function PlannerView() {
           store.setInitialCommand(refineCaseId, cmds);
           store.clearAcceptance(refineCaseId);
           store.setStatus(`Refined ${refineCaseId} in ${elapsedSec}s.`, 'success');
+          setChatMessages(prev => [...prev, {
+            id: makeId(),
+            role: 'assistant',
+            content: `Refined ${refineCaseId} in ${elapsedSec}s.\n\n${replacement.objective || replacement.expectedOutcome || 'Updated the draft case.'}`,
+            createdAt: new Date().toISOString(),
+          }]);
         }
       } else {
         const newCases = data.cases || [];
@@ -255,9 +338,23 @@ export default function PlannerView() {
         });
         setGenInfo([data.model || '', `+${newCases.length} cases (${merged.length} total)`, `${elapsedSec}s`].filter(Boolean));
         store.setStatus(`Generated ${newCases.length} new test cases in ${elapsedSec}s (${merged.length} total).`, 'success');
+        const previewLines = newCases.slice(0, 3).map(tc => `- ${tc.caseId}: ${tc.objective || tc.expectedOutcome || 'Draft case ready for review.'}`);
+        setChatMessages(prev => [...prev, {
+          id: makeId(),
+          role: 'assistant',
+          content: `Generated ${newCases.length} test case${newCases.length === 1 ? '' : 's'} in ${elapsedSec}s.${previewLines.length > 0 ? `\n\n${previewLines.join('\n')}` : ''}`,
+          createdAt: new Date().toISOString(),
+        }]);
       }
     } catch (err: unknown) {
-      store.setStatus((err as Error)?.message || 'Request failed', 'error');
+      const errorText = (err as Error)?.message || 'Request failed';
+      store.setStatus(errorText, 'error');
+      setChatMessages(prev => [...prev, {
+        id: makeId(),
+        role: 'assistant',
+        content: `Error: ${errorText}`,
+        createdAt: new Date().toISOString(),
+      }]);
     } finally {
       store.setGenerating(false);
     }
@@ -419,6 +516,129 @@ export default function PlannerView() {
     try { await api.deletePlan(id); refreshSavedPlans(); store.setStatus('Plan deleted.', 'success'); } catch { /* */ }
   }
 
+  const restoreThread = useCallback((thread: PlannerConversationThread) => {
+    store.resetPlannerDraft();
+    store.setPrompt(thread.snapshot.prompt || '');
+    store.setCaseCount(thread.snapshot.caseCount || 8);
+    store.setSelectedResourceTypes(thread.snapshot.selectedResourceTypes || []);
+    store.setUploadedFiles(thread.snapshot.uploadedFiles || []);
+    store.setAllCases(thread.snapshot.allCases || []);
+    store.setModel(thread.snapshot.model || '');
+    (thread.snapshot.allCases || []).forEach((tc, index) => {
+      const caseId = tc.caseId || `case-${index + 1}`;
+      store.setInitialCommand(caseId, buildRelevantAzCliCommands(tc.runRequest || {}).join('\n'));
+    });
+    setChatMessages(thread.messages || []);
+    setGenInfo([]);
+    setElapsed('');
+    setRefineTarget(null);
+    setBulkRunStatus('');
+    setBulkRunTone('');
+  }, [store]);
+
+  const persistThreads = useCallback((threads: PlannerConversationThread[], nextActiveId: string) => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(PLANNER_CONVERSATIONS_KEY, JSON.stringify(threads));
+    window.localStorage.setItem(PLANNER_ACTIVE_CONVERSATION_KEY, nextActiveId);
+  }, []);
+
+  const createNewConversation = useCallback(() => {
+    const thread = createPlannerThread();
+    setPlannerThreads(prev => {
+      const next = [thread, ...prev];
+      persistThreads(next, thread.id);
+      return next;
+    });
+    setActiveThreadId(thread.id);
+    setChatMessages([]);
+    store.resetPlannerDraft();
+    setGenInfo([]);
+    setElapsed('');
+    setRefineTarget(null);
+    setBulkRunStatus('');
+    setBulkRunTone('');
+    store.setStatus('Planner ready. Describe the behavior you want to pressure-test.', 'success');
+    promptRef.current?.focus();
+  }, [persistThreads, store]);
+
+  const selectConversation = useCallback((threadId: string) => {
+    const thread = plannerThreads.find(item => item.id === threadId);
+    if (!thread) return;
+    setActiveThreadId(thread.id);
+    restoreThread(thread);
+    promptRef.current?.focus();
+  }, [plannerThreads, restoreThread]);
+
+  useEffect(() => {
+    if (threadInitRef.current || typeof window === 'undefined') return;
+    threadInitRef.current = true;
+    try {
+      const rawThreads = window.localStorage.getItem(PLANNER_CONVERSATIONS_KEY);
+      const rawActiveId = window.localStorage.getItem(PLANNER_ACTIVE_CONVERSATION_KEY);
+      const parsedThreads = rawThreads ? JSON.parse(rawThreads) as PlannerConversationThread[] : [];
+      if (parsedThreads.length > 0) {
+        const active = parsedThreads.find(thread => thread.id === rawActiveId) || parsedThreads[0];
+        setPlannerThreads(parsedThreads);
+        setActiveThreadId(active.id);
+        restoreThread(active);
+        return;
+      }
+    } catch { /* fallback to blank thread */ }
+    const freshThread = createPlannerThread();
+    setPlannerThreads([freshThread]);
+    setActiveThreadId(freshThread.id);
+    persistThreads([freshThread], freshThread.id);
+  }, [persistThreads, restoreThread]);
+
+  useEffect(() => {
+    if (!threadInitRef.current || !activeThreadId) return;
+    const snapshot = {
+      prompt: store.prompt,
+      caseCount: store.caseCount,
+      selectedResourceTypes: [...store.selectedResourceTypes],
+      uploadedFiles: store.uploadedFiles,
+      allCases: store.allCases,
+      model: store.model,
+    };
+    setPlannerThreads(prev => {
+      const next = prev.map(thread => thread.id === activeThreadId ? {
+        ...thread,
+        title: buildConversationTitle(snapshot.prompt, chatMessages),
+        updatedAt: new Date().toISOString(),
+        messages: chatMessages,
+        snapshot,
+      } : thread).sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+      persistThreads(next, activeThreadId);
+      return next;
+    });
+  }, [
+    activeThreadId,
+    chatMessages,
+    persistThreads,
+    store.allCases,
+    store.caseCount,
+    store.model,
+    store.prompt,
+    store.selectedResourceTypes,
+    store.uploadedFiles,
+  ]);
+
+  const addStarterPrompt = useCallback((promptText: string) => {
+    const nextPrompt = promptText.trim();
+    const currentPrompt = store.prompt.trim();
+    if (!currentPrompt) {
+      store.setPrompt(nextPrompt);
+      promptRef.current?.focus();
+      return;
+    }
+    if (currentPrompt.includes(nextPrompt)) {
+      promptRef.current?.focus();
+      return;
+    }
+    store.setPrompt(`${currentPrompt}\n\n${nextPrompt}`);
+    promptRef.current?.focus();
+  }, [store]);
+
   /* ─── Derived state ──────────────────────────────────── */
   const { allCases, currentPage, acceptedCommands, initialCommands, runningJobs, completedJobData, caseStatuses, selectedResourceTypes, generating } = store;
   const isAllSelected = selectedResourceTypes.has('e2e');
@@ -456,30 +676,87 @@ export default function PlannerView() {
   const selectedResourceLabels = isAllSelected
     ? ['End-to-end coverage']
     : [...selectedResourceTypes].map(type => resourceMeta[type].label.replace(/ \(.*/, ''));
+  const plannerSummaryItems = [
+    contextReady ? 'Azure context ready' : `${contextProgress}/3 Azure fields selected`,
+    `Depth ${depthLabels[store.caseCount]}`,
+    selectedResourceLabels.length > 0 ? `Scope ${selectedResourceLabels.join(', ')}` : 'Scope not set',
+    store.uploadedFiles.length > 0 ? `${store.uploadedFiles.length} reference file${store.uploadedFiles.length === 1 ? '' : 's'}` : 'No reference files',
+  ];
+  const plannerOptionSummary = `${depthLabels[store.caseCount]} depth • ${resourceSummary}`;
+  const promptMetaItems = [
+    `${promptDetail} prompt`,
+    `${store.prompt.length} chars`,
+    contextReady ? 'Ready to generate' : 'Azure context required',
+  ];
+  const hasResults = allCases.length > 0 || generating;
+  const isPromptEmpty = store.prompt.trim().length === 0;
+  const starterPromptChoices = mergedQuickPrompts.filter((qp, index, arr) => arr.findIndex(candidate => candidate.prompt === qp.prompt) === index);
+  const resultsMeta = generating && allCases.length === 0 ? 'Generating draft...' : `${allCases.length} cases${elapsed ? ` • ${elapsed}s` : ''}`;
+  const sortedThreads = [...plannerThreads].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+  const visibleThreads = sortedThreads;
+  const activeThread = sortedThreads.find(thread => thread.id === activeThreadId) || null;
 
   return (
     <>
-      <section className="surface context-shell">
-        <div className="context-shell-head">
-          <div>
-            <span className="section-label">Azure Context</span>
-            <h2>Target environment</h2>
-            <p>Select the Azure scope used by plan generation and execution.</p>
+      <div className="planner-page-layout">
+        <aside className="surface planner-chat-pane">
+          <div className="planner-chat-bar">
+            <div className="planner-chat-copy">
+              <span className="section-label">Planner Chats</span>
+              <p>Saved automatically in this browser, so you can come back to the same planning thread.</p>
+            </div>
+            <div className="planner-chat-actions">
+              <button type="button" className="secondary-btn" onClick={createNewConversation}>New Chat</button>
+            </div>
           </div>
-          <span className="context-required">Required before generate or run</span>
-        </div>
 
-        <div className="azure-target-bar">
-          {renderPicker('Subscription', subItems, subLabel, subOpen, setSubOpen, subSearch, setSubSearch, selectSub, false, subLoading)}
-          {renderPicker('Resource Group', rgItems, rgLabel, rgOpen, setRgOpen, rgSearch, setRgSearch, selectRg, rgDisabled, false)}
-          {renderPicker('Custom Location', clItems, clLabel, clOpen, setClOpen, clSearch, setClSearch, selectCl, clDisabled, false)}
-        </div>
-        {validationError && (
-          <div className="azure-validation-error">{validationError}</div>
-        )}
-      </section>
+          {visibleThreads.length > 0 && (
+            <div className="planner-thread-list" aria-label="Saved planner conversations">
+              {visibleThreads.map(thread => {
+                const preview = buildConversationPreview(thread);
+                return (
+                  <button
+                    key={thread.id}
+                    type="button"
+                    className={`planner-thread-chip${thread.id === activeThreadId ? ' active' : ''}`}
+                    onClick={() => selectConversation(thread.id)}
+                  >
+                    <div className="planner-thread-meta">
+                      <strong>{thread.title}</strong>
+                      <span>{new Date(thread.updatedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
+                    </div>
+                    <p className="planner-thread-preview">{preview}</p>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </aside>
 
-      <div className={`split-layout${allCases.length > 0 ? ' has-results' : ''}`}>
+        <div className="planner-main-column">
+          <section className="surface context-shell">
+            <div className="context-shell-head">
+              <div>
+                <span className="section-label">Azure Context</span>
+                <h2>Target environment</h2>
+                <p>Select the Azure scope used by plan generation and execution.</p>
+              </div>
+              <span className={`context-required${contextReady ? ' ready' : ''}`}>
+                {contextReady ? 'Ready to generate and run' : 'Required before generate or run'}
+              </span>
+            </div>
+
+            <div className="azure-target-bar">
+              {renderPicker('Subscription', subItems, subLabel, subOpen, setSubOpen, subSearch, setSubSearch, selectSub, false, subLoading)}
+              {renderPicker('Resource Group', rgItems, rgLabel, rgOpen, setRgOpen, rgSearch, setRgSearch, selectRg, rgDisabled, false)}
+              {renderPicker('Custom Location', clItems, clLabel, clOpen, setClOpen, clSearch, setClSearch, selectCl, clDisabled, false)}
+            </div>
+            {validationError && (
+              <div className="azure-validation-error">{validationError}</div>
+            )}
+          </section>
+
+          <div className={`split-layout${hasResults ? ' has-results' : ' is-idle'}`}>
         {/* ─── Composer ────────────────────────────────────── */}
         <section className="surface composer">
           <div className="composer-top">
@@ -488,12 +765,11 @@ export default function PlannerView() {
               <h2>Ask the planner for test cases</h2>
               <p>Write the scenario the way you would brief an operator. Keep the prompt natural, then use scope, depth, and files only where they sharpen the draft.</p>
             </div>
-            <div className="planner-hero-pills">
-              <span className={`planner-hero-pill ${contextReady ? 'ready' : 'warning'}`}>
-                {contextReady ? 'Azure context ready' : `${contextProgress}/3 context fields selected`}
-              </span>
-              <span className="planner-hero-pill">{resourceSummary}</span>
-              <span className="planner-hero-pill">{store.caseCount} planned</span>
+            <div className="planner-summary" aria-label="Planner summary">
+              {activeThread && <span className="planner-summary-item">{activeThread.title}</span>}
+              {plannerSummaryItems.map(item => (
+                <span key={item} className="planner-summary-item">{item}</span>
+              ))}
             </div>
           </div>
 
@@ -505,21 +781,24 @@ export default function PlannerView() {
                     <div className="prompt-shell-kicker">Planner Prompt</div>
                     <div className="prompt-shell-title">What should the planner generate?</div>
                     <p className="prompt-shell-description">Describe the scenario, failure modes, constraints, or success criteria. The planner will turn it into CLI-backed cases you can inspect, edit, and run.</p>
-                  </div>
-                  <div className="prompt-signals prompt-signals-top">
-                    <span className="prompt-signal">{promptDetail}</span>
-                    <span className="prompt-signal">{store.prompt.length} chars</span>
+                    <div className="prompt-shell-meta">
+                      {promptMetaItems.map(item => (
+                        <span key={item} className="prompt-meta-item">{item}</span>
+                      ))}
+                    </div>
                   </div>
                 </div>
 
-                <div className="prompt-context-strip">
-                  <span className={`prompt-context-pill ${contextReady ? 'ready' : 'warning'}`}>
-                    {contextReady ? 'Ready to generate' : 'Context required before generate or run'}
-                  </span>
-                  <span className="prompt-context-pill">Depth: {depthLabels[store.caseCount]}</span>
-                  <span className="prompt-context-pill">Coverage: {resourceSummary}</span>
-                  <span className="prompt-context-pill">Files: {attachmentSummary}</span>
-                </div>
+                {chatMessages.length > 0 && (
+                  <div className="planner-chat-log" aria-label="Planner conversation">
+                    {chatMessages.map(message => (
+                      <article key={message.id} className={`planner-chat-message ${message.role}`}>
+                        <span className="planner-chat-role">{message.role === 'user' ? 'You' : 'Planner'}</span>
+                        <p>{message.content}</p>
+                      </article>
+                    ))}
+                  </div>
+                )}
 
                 <textarea
                   id="prompt"
@@ -530,19 +809,62 @@ export default function PlannerView() {
                   placeholder={meta.placeholder}
                 />
 
+                {starterPromptChoices.length > 0 && (
+                  <div className={`composer-suggestions${isPromptEmpty ? '' : ' compact'}`}>
+                    <div className="composer-suggestions-head">{isPromptEmpty ? 'Start with one of these' : 'Add more starter prompts'}</div>
+                    <div className="composer-suggestions-row">
+                      {starterPromptChoices.map((qp, i) => (
+                        <button
+                          key={`${qp.tag}-${qp.label}-${i}`}
+                          type="button"
+                          className="composer-suggestion-chip"
+                          onClick={() => addStarterPrompt(qp.prompt)}
+                        >
+                          <strong>{qp.tag ? `${qp.tag}: ${qp.label}` : qp.label}</strong>
+                          <span>{qp.desc}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="prompt-composer-bar">
+                  <input
+                    ref={fileInputRef}
+                    className="composer-file-input"
+                    type="file"
+                    multiple
+                    accept=".json,.yaml,.yml,.txt,.md,.log,.csv,.xml,.toml,.sh,.ps1,.go,.py"
+                    onChange={e => { handleFiles(e.target.files); e.target.value = ''; }}
+                  />
+                  <button type="button" className="attach-btn" onClick={() => fileInputRef.current?.click()} aria-label="Attach reference files">
+                    <Plus size={16} />
+                  </button>
+                  <div className="attach-copy">
+                    <strong>Add reference files</strong>
+                    <span>{store.uploadedFiles.length > 0 ? `${store.uploadedFiles.length}/${MAX_FILES} attached` : 'Specs, logs, runbooks, or examples'}</span>
+                  </div>
+                </div>
+
+                {store.uploadedFiles.length > 0 && (
+                  <div className="file-chips composer-file-chips">
+                    {store.uploadedFiles.map((f, i) => (
+                      <span key={f.name} className="file-chip">
+                        {f.name} <span className="file-size">({(f.size / 1024).toFixed(1)} KB)</span>
+                        <button type="button" className="remove-file" onClick={() => store.removeFile(i)}>&times;</button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+
                 <div className="prompt-footer">
                   <div className="prompt-footer-copy">
-                    <div className="prompt-signals">
-                      <span className="prompt-signal">Use Cmd/Ctrl + Enter to generate</span>
-                      <span className="prompt-signal">{meta.label}</span>
-                    </div>
-                    {selectedResourceLabels.length > 0 && (
-                      <div className="selection-strip">
-                        {selectedResourceLabels.map(label => (
-                          <span key={label} className="selection-chip">{label}</span>
-                        ))}
-                      </div>
-                    )}
+                    <p className="prompt-hint">Use Cmd/Ctrl + Enter to generate. {meta.label}.</p>
+                    <p className="selection-summary">
+                      {selectedResourceLabels.length > 0
+                        ? `Current scope: ${selectedResourceLabels.join(', ')}.`
+                        : 'Current scope: choose the Azure Local surfaces the planner should cover.'}
+                    </p>
                   </div>
                   <div className="prompt-footer-actions">
                     <button className="primary-btn composer-generate-btn" disabled={generating} onClick={generate}>
@@ -552,13 +874,19 @@ export default function PlannerView() {
                 </div>
               </div>
 
-              <div className="planner-sidecar">
-                <div className="control-card depth-card">
-                  <div className="control-card-head">
-                    <span className="control-card-title">Depth</span>
-                    <span className="field-hint">{store.caseCount} cases</span>
+              <section className="planner-tools">
+                <div className="planner-tools-panel-head">
+                  <div className="planner-tools-head">
+                    <span className="control-card-title">Planner options</span>
+                    <span className="planner-tools-summary">{plannerOptionSummary}</span>
                   </div>
-                  <div className="depth-picker">
+                </div>
+                <div className="planner-tools-body">
+                  <section className="planner-tool-section">
+                    <div className="planner-tool-head">
+                      <span className="control-card-title">Depth</span>
+                      <span className="field-hint">{store.caseCount} cases</span>
+                    </div>
                     <p className="control-card-copy">Choose how wide the first draft should go before you refine individual cases.</p>
                     <div className="depth-toggle">
                       {[4, 8, 12].map(n => (
@@ -567,15 +895,13 @@ export default function PlannerView() {
                         </button>
                       ))}
                     </div>
-                  </div>
-                </div>
+                  </section>
 
-                <div className="control-card resource-card">
-                  <div className="control-card-head">
-                    <span className="control-card-title">Resource coverage</span>
-                    <span className="field-hint">{resourceSummary}</span>
-                  </div>
-                  <div className="resource-card-stack">
+                  <section className="planner-tool-section">
+                    <div className="planner-tool-head">
+                      <span className="control-card-title">Resource coverage</span>
+                      <span className="field-hint">{resourceSummary}</span>
+                    </div>
                     <p className="control-card-copy">Pick the Azure Local surfaces the planner should cover. Keep it narrow for focused prompts.</p>
                     <div className="resource-checkboxes resource-checkboxes-compact">
                       <label className="resource-checkbox">
@@ -593,49 +919,10 @@ export default function PlannerView() {
                         </label>
                       ))}
                     </div>
-                  </div>
-                </div>
+                  </section>
 
-                <div className="control-card attach-card">
-                  <div className="control-card-head">
-                    <span className="control-card-title">Reference files</span>
-                    <span className="field-hint">{attachmentSummary}</span>
-                  </div>
-                  <p className="control-card-copy">Attach specs, logs, or existing runbooks when the planner needs concrete context.</p>
-                  <div className="file-upload-zone" onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); handleFiles(e.dataTransfer.files); }}>
-                    <input type="file" multiple accept=".json,.yaml,.yml,.txt,.md,.log,.csv,.xml,.toml,.sh,.ps1,.go,.py" onChange={e => { handleFiles(e.target.files); e.target.value = ''; }} />
-                    <div className="upload-label"><strong>Drop files</strong> or click to attach source material</div>
-                  </div>
-                  {store.uploadedFiles.length > 0 && (
-                    <div className="file-chips">
-                      {store.uploadedFiles.map((f, i) => (
-                        <span key={f.name} className="file-chip">
-                          {f.name} <span className="file-size">({(f.size / 1024).toFixed(1)} KB)</span>
-                          <button type="button" className="remove-file" onClick={() => store.removeFile(i)}>&times;</button>
-                        </span>
-                      ))}
-                    </div>
-                  )}
                 </div>
-              </div>
-            </div>
-
-            <div className="prompt-library">
-              <div className="prompt-library-head">
-                <div className="prompt-library-copy">
-                  <span className="control-card-title">Starter prompts</span>
-                  <p>Use one as a first turn, then rewrite it in your own words.</p>
-                </div>
-                <span className="field-hint">{mergedQuickPrompts.length} suggestions</span>
-              </div>
-              <div className="quick-prompts">
-                {mergedQuickPrompts.map((qp, i) => (
-                  <button key={`${qp.tag}-${qp.label}-${i}`} type="button" className="chip" onClick={() => { store.setPrompt(qp.prompt); promptRef.current?.focus(); }}>
-                    <strong>{qp.tag ? `${qp.tag}: ${qp.label}` : qp.label}</strong>
-                    <span>{qp.desc}</span>
-                  </button>
-                ))}
-              </div>
+              </section>
             </div>
           </div>
 
@@ -644,197 +931,181 @@ export default function PlannerView() {
               {store.status}
             </div>
           )}
-
-          {allCases.length === 0 && !generating && (
-            <details className="saved-plans" style={{ marginTop: 16 }}>
-              <summary>Saved plan library</summary>
-              <div className="saved-plans-list">
-                {savedPlans.length === 0 && <p className="saved-plans-empty">No saved plans yet.</p>}
-                {savedPlans.map(p => (
-                  <div key={p.id} className="saved-plan-row">
-                    <span className="plan-name">{p.name}</span>
-                    <span className="plan-meta">{p.caseCount} cases{p.model ? ` · ${p.model}` : ''}{p.createdAt ? ` · ${new Date(p.createdAt).toLocaleDateString()}` : ''}</span>
-                    <button type="button" onClick={() => loadPlan(p.id)}>Load</button>
-                    <button type="button" className="delete-btn" onClick={() => deletePlan(p.id)}>Delete</button>
-                  </div>
-                ))}
-              </div>
-            </details>
-          )}
         </section>
 
         {/* ─── Results Shell (only when cases exist or generating) ──────── */}
-        {(allCases.length > 0 || generating) && (
-        <section className="surface results-shell">
-          <div className="results-top">
-            <div>
-              <span className="section-label">Generated Plan</span>
-              <h2>Review the drafted cases</h2>
-              <p>Edit the proposed execution flows, accept the ones you trust, and run them from the same workspace.</p>
-            </div>
-            <span className="run-meta">
-              {`${allCases.length} cases${elapsed ? ` • ${elapsed}s` : ''}`}
-            </span>
-          </div>
-
-          <div className={`status${store.statusTone === 'error' ? ' error' : store.statusTone === 'success' ? ' success' : ''}`}>
-            {store.status}
-          </div>
-
-          {genInfo.length > 0 && (
-            <div className="generation-info visible">
-              {genInfo.map((item, i) => <span key={i} className="info-pill">{item}</span>)}
-            </div>
-          )}
-
-          {allCases.length > 0 && (
-            <section className="bulk-actions visible">
-              <div className="left">Accepted {acceptedCommands.size} of {allCases.length} cases</div>
-              <div className="right">
-                <div className="run-mode-toggle">
-                  <button type="button" className={`mode-btn${store.bulkRunMode === 'parallel' ? ' active' : ''}`} onClick={() => store.setBulkRunMode('parallel')}>Parallel</button>
-                  <button type="button" className={`mode-btn${store.bulkRunMode === 'sequential' ? ' active' : ''}`} onClick={() => store.setBulkRunMode('sequential')}>Sequential</button>
-                </div>
-                <button type="button" className={`secondary-btn run-all-btn${bulkRunBusy ? ' running' : ''}`} disabled={bulkRunBusy} onClick={bulkRunAll}>
-                  {bulkRunBusy ? 'Running...' : 'Run All'}
-                </button>
-                <button type="button" className="secondary-btn" onClick={() => store.acceptAll()}>Accept All</button>
-                <button type="button" className="secondary-btn" onClick={() => store.clearAllAcceptance()}>Clear</button>
-                <button type="button" className="secondary-btn danger-btn" onClick={() => {
-                  store.setAllCases([]);
-                  store.clearAllAcceptance();
-                  store.clearAllCaseStatuses();
-                  setGenInfo([]);
-                  setElapsed('');
-                  setBulkRunStatus('');
-                  setBulkRunTone('');
-                  store.setStatus('All test cases cleared.', 'success');
-                }}>Reset All</button>
-                <button type="button" className="secondary-btn" disabled={acceptedCommands.size === 0} onClick={async () => {
-                  const bundle = Array.from(acceptedCommands.entries()).map(([id, cmds]) => `# ${id}\n${cmds}`).join('\n\n');
-                  const ok = await copyText(bundle);
-                  store.setStatus(ok ? 'Copied accepted command bundle.' : 'Clipboard copy failed.', ok ? 'success' : 'error');
-                }}>Copy Accepted</button>
-                <button type="button" className="secondary-btn" onClick={() => { if (allCases.length > 0) { setPlanName(''); setSaveModalOpen(true); } }}>Save Plan</button>
+        {hasResults && (
+          <section className="surface results-shell">
+            <div className="results-top">
+              <div>
+                <span className="section-label">Generated Plan</span>
+                <h2>Review the drafted cases</h2>
+                <p>Edit the proposed execution flows, accept the ones you trust, and run them from the same workspace.</p>
               </div>
-            </section>
-          )}
-
-          {bulkRunStatus && (
-            <div className={`bulk-run-status visible${bulkRunTone ? ' ' + bulkRunTone : ''}`}>{bulkRunStatus}</div>
-          )}
-
-          <div className="results">
-            {generating && allCases.length === 0 && [0, 1, 2].map(i => (
-              <article key={i} className="skeleton-card">
-                <div className="skeleton-line short" /><div className="skeleton-line medium" /><div className="skeleton-line long" /><div className="skeleton-line long" />
-              </article>
-            ))}
-
-            {pageCases.map((tc, pageIdx) => {
-              const globalIdx = pageStart + pageIdx;
-              const caseId = tc.caseId || `case-${globalIdx + 1}`;
-              const runRequest = tc.runRequest || {};
-              const pills = extractResourcePills(runRequest);
-              const citations = tc.citations || [];
-              const isAccepted = acceptedCommands.has(caseId);
-              const isRunning = runningJobs.has(caseId);
-              const completed = completedJobData.get(caseId);
-              const caseStatus = caseStatuses.get(caseId) || null;
-              const commands = isAccepted ? acceptedCommands.get(caseId)! : (initialCommands.get(caseId) || buildRelevantAzCliCommands(runRequest).join('\n'));
-
-              let runStatusText = '';
-              let runStatusClass = '';
-              if (isRunning) {
-                const jobId = runningJobs.get(caseId);
-                runStatusText = jobId ? `Job ${jobId} running...` : 'Submitting...';
-                runStatusClass = 'visible running';
-              } else if (completed) {
-                const st = (completed.job.status || '').toLowerCase();
-                const cssClass = st === 'cancelled' ? 'cancelled' : (st === 'failed' || st === 'error') ? 'failed' : 'succeeded';
-                runStatusText = `Job ${completed.jobId}: ${cssClass}${completed.job.error && cssClass !== 'succeeded' ? ` — ${completed.job.error}` : ''}`;
-                runStatusClass = `visible ${cssClass}`;
-              } else if (caseStatus) {
-                runStatusText = caseStatus.text;
-                runStatusClass = `visible ${caseStatus.tone === 'success' ? 'succeeded' : caseStatus.tone === 'error' ? 'failed' : ''}`.trim();
-              }
-
-              return (
-                <CaseCard
-                  key={caseId}
-                  caseId={caseId}
-                  globalIndex={globalIdx}
-                  testCase={tc}
-                  commands={commands}
-                  isAccepted={isAccepted}
-                  isRunning={isRunning}
-                  runStatusText={runStatusText}
-                  runStatusClass={runStatusClass}
-                  completedData={completed || null}
-                  pills={pills}
-                  citations={citations}
-                  onAccept={(val) => store.acceptCase(caseId, val)}
-                  onClearAcceptance={() => store.clearAcceptance(caseId)}
-                  onReset={() => {
-                    const fresh = buildRelevantAzCliCommands(runRequest).join('\n');
-                    store.setInitialCommand(caseId, fresh);
-                    store.clearAcceptance(caseId);
-                  }}
-                  onRun={() => runTestCase(caseId, runRequest)}
-                  onStop={async () => {
-                    const jobId = runningJobs.get(caseId);
-                    if (jobId) try { await api.cancelJob(jobId); } catch { /* */ }
-                  }}
-                  onRefine={() => {
-                    const parts = [`Refine ${caseId}:`];
-                    if (tc.objective) parts.push(`Objective was: ${tc.objective}.`);
-                    if (tc.mutation) parts.push(`Mutation was: ${tc.mutation}.`);
-                    if (tc.expectedOutcome) parts.push(`Expected was: ${tc.expectedOutcome}.`);
-                    parts.push('The issue is: ');
-                    store.setPrompt(parts.join(' '));
-                    store.setCaseCount(4);
-                    setRefineTarget(caseId);
-                    promptRef.current?.focus();
-                    store.setStatus(`Refining ${caseId} — describe the issue and hit Generate.`, 'success');
-                  }}
-                  onCopy={async (val) => {
-                    const ok = await copyText(val);
-                    store.setStatus(ok ? `Copied commands for ${caseId}.` : 'Clipboard copy failed.', ok ? 'success' : 'error');
-                  }}
-                  initialCommands={initialCommands.get(caseId) || buildRelevantAzCliCommands(runRequest).join('\n')}
-                />
-              );
-            })}
-          </div>
-
-          {totalPages > 1 && (
-            <nav className="pagination visible">
-              <button className="page-btn" disabled={page === 1} onClick={() => store.setCurrentPage(page - 1)}>Prev</button>
-              {Array.from({ length: totalPages }, (_, i) => i + 1).map(p => (
-                <button key={p} className={`page-btn${p === page ? ' active' : ''}`} onClick={() => store.setCurrentPage(p)}>{p}</button>
-              ))}
-              <span className="page-info">{pageStart + 1}–{Math.min(pageStart + PAGE_SIZE, allCases.length)} of {allCases.length}</span>
-              <button className="page-btn" disabled={page === totalPages} onClick={() => store.setCurrentPage(page + 1)}>Next</button>
-            </nav>
-          )}
-
-          <details className="saved-plans">
-            <summary>Saved plan library</summary>
-            <div className="saved-plans-list">
-              {savedPlans.length === 0 && <p className="saved-plans-empty">No saved plans yet.</p>}
-              {savedPlans.map(p => (
-                <div key={p.id} className="saved-plan-row">
-                  <span className="plan-name">{p.name}</span>
-                  <span className="plan-meta">{p.caseCount} cases{p.model ? ` · ${p.model}` : ''}{p.createdAt ? ` · ${new Date(p.createdAt).toLocaleDateString()}` : ''}</span>
-                  <button type="button" onClick={() => loadPlan(p.id)}>Load</button>
-                  <button type="button" className="delete-btn" onClick={() => deletePlan(p.id)}>Delete</button>
-                </div>
-              ))}
+              <span className="run-meta">{resultsMeta}</span>
             </div>
-          </details>
-        </section>
+
+            <div className={`status${store.statusTone === 'error' ? ' error' : store.statusTone === 'success' ? ' success' : ''}`}>
+              {store.status}
+            </div>
+
+            {genInfo.length > 0 && (
+              <div className="generation-info visible">
+                {genInfo.map((item, i) => <span key={i} className="info-pill">{item}</span>)}
+              </div>
+            )}
+
+            {allCases.length > 0 && (
+              <section className="bulk-actions visible">
+                <div className="left">Accepted {acceptedCommands.size} of {allCases.length} cases</div>
+                <div className="right">
+                  <div className="run-mode-toggle">
+                    <button type="button" className={`mode-btn${store.bulkRunMode === 'parallel' ? ' active' : ''}`} onClick={() => store.setBulkRunMode('parallel')}>Parallel</button>
+                    <button type="button" className={`mode-btn${store.bulkRunMode === 'sequential' ? ' active' : ''}`} onClick={() => store.setBulkRunMode('sequential')}>Sequential</button>
+                  </div>
+                  <button type="button" className={`secondary-btn run-all-btn${bulkRunBusy ? ' running' : ''}`} disabled={bulkRunBusy} onClick={bulkRunAll}>
+                    {bulkRunBusy ? 'Running...' : 'Run All'}
+                  </button>
+                  <button type="button" className="secondary-btn" onClick={() => store.acceptAll()}>Accept All</button>
+                  <button type="button" className="secondary-btn" onClick={() => store.clearAllAcceptance()}>Clear</button>
+                  <button type="button" className="secondary-btn danger-btn" onClick={() => {
+                    store.setAllCases([]);
+                    store.clearAllAcceptance();
+                    store.clearAllCaseStatuses();
+                    setGenInfo([]);
+                    setElapsed('');
+                    setBulkRunStatus('');
+                    setBulkRunTone('');
+                    store.setStatus('All test cases cleared.', 'success');
+                  }}>Reset All</button>
+                  <button type="button" className="secondary-btn" disabled={acceptedCommands.size === 0} onClick={async () => {
+                    const bundle = Array.from(acceptedCommands.entries()).map(([id, cmds]) => `# ${id}\n${cmds}`).join('\n\n');
+                    const ok = await copyText(bundle);
+                    store.setStatus(ok ? 'Copied accepted command bundle.' : 'Clipboard copy failed.', ok ? 'success' : 'error');
+                  }}>Copy Accepted</button>
+                  <button type="button" className="secondary-btn" onClick={() => { if (allCases.length > 0) { setPlanName(''); setSaveModalOpen(true); } }}>Save Plan</button>
+                </div>
+              </section>
+            )}
+
+            {bulkRunStatus && (
+              <div className={`bulk-run-status visible${bulkRunTone ? ' ' + bulkRunTone : ''}`}>{bulkRunStatus}</div>
+            )}
+
+            <div className="results">
+              {generating && allCases.length === 0 && [0, 1, 2].map(i => (
+                <article key={i} className="skeleton-card">
+                  <div className="skeleton-line short" /><div className="skeleton-line medium" /><div className="skeleton-line long" /><div className="skeleton-line long" />
+                </article>
+              ))}
+
+              {pageCases.map((tc, pageIdx) => {
+                const globalIdx = pageStart + pageIdx;
+                const caseId = tc.caseId || `case-${globalIdx + 1}`;
+                const runRequest = tc.runRequest || {};
+                const pills = extractResourcePills(runRequest);
+                const citations = tc.citations || [];
+                const isAccepted = acceptedCommands.has(caseId);
+                const isRunning = runningJobs.has(caseId);
+                const completed = completedJobData.get(caseId);
+                const caseStatus = caseStatuses.get(caseId) || null;
+                const commands = isAccepted ? acceptedCommands.get(caseId)! : (initialCommands.get(caseId) || buildRelevantAzCliCommands(runRequest).join('\n'));
+
+                let runStatusText = '';
+                let runStatusClass = '';
+                if (isRunning) {
+                  const jobId = runningJobs.get(caseId);
+                  runStatusText = jobId ? `Job ${jobId} running...` : 'Submitting...';
+                  runStatusClass = 'visible running';
+                } else if (completed) {
+                  const st = (completed.job.status || '').toLowerCase();
+                  const cssClass = st === 'cancelled' ? 'cancelled' : (st === 'failed' || st === 'error') ? 'failed' : 'succeeded';
+                  runStatusText = `Job ${completed.jobId}: ${cssClass}${completed.job.error && cssClass !== 'succeeded' ? ` — ${completed.job.error}` : ''}`;
+                  runStatusClass = `visible ${cssClass}`;
+                } else if (caseStatus) {
+                  runStatusText = caseStatus.text;
+                  runStatusClass = `visible ${caseStatus.tone === 'success' ? 'succeeded' : caseStatus.tone === 'error' ? 'failed' : ''}`.trim();
+                }
+
+                return (
+                  <CaseCard
+                    key={caseId}
+                    caseId={caseId}
+                    globalIndex={globalIdx}
+                    testCase={tc}
+                    commands={commands}
+                    isAccepted={isAccepted}
+                    isRunning={isRunning}
+                    runStatusText={runStatusText}
+                    runStatusClass={runStatusClass}
+                    completedData={completed || null}
+                    pills={pills}
+                    citations={citations}
+                    startCollapsed={allCases.length > 1 && !isRunning}
+                    onAccept={(val) => store.acceptCase(caseId, val)}
+                    onClearAcceptance={() => store.clearAcceptance(caseId)}
+                    onReset={() => {
+                      const fresh = buildRelevantAzCliCommands(runRequest).join('\n');
+                      store.setInitialCommand(caseId, fresh);
+                      store.clearAcceptance(caseId);
+                    }}
+                    onRun={() => runTestCase(caseId, runRequest)}
+                    onStop={async () => {
+                      const jobId = runningJobs.get(caseId);
+                      if (jobId) try { await api.cancelJob(jobId); } catch { /* */ }
+                    }}
+                    onRefine={() => {
+                      const parts = [`Refine ${caseId}:`];
+                      if (tc.objective) parts.push(`Objective was: ${tc.objective}.`);
+                      if (tc.mutation) parts.push(`Mutation was: ${tc.mutation}.`);
+                      if (tc.expectedOutcome) parts.push(`Expected was: ${tc.expectedOutcome}.`);
+                      parts.push('The issue is: ');
+                      store.setPrompt(parts.join(' '));
+                      store.setCaseCount(4);
+                      setRefineTarget(caseId);
+                      promptRef.current?.focus();
+                      store.setStatus(`Refining ${caseId} — describe the issue and hit Generate.`, 'success');
+                    }}
+                    onCopy={async (val) => {
+                      const ok = await copyText(val);
+                      store.setStatus(ok ? `Copied commands for ${caseId}.` : 'Clipboard copy failed.', ok ? 'success' : 'error');
+                    }}
+                    initialCommands={initialCommands.get(caseId) || buildRelevantAzCliCommands(runRequest).join('\n')}
+                  />
+                );
+              })}
+            </div>
+
+            {totalPages > 1 && (
+              <nav className="pagination visible">
+                <button className="page-btn" disabled={page === 1} onClick={() => store.setCurrentPage(page - 1)}>Prev</button>
+                {Array.from({ length: totalPages }, (_, i) => i + 1).map(p => (
+                  <button key={p} className={`page-btn${p === page ? ' active' : ''}`} onClick={() => store.setCurrentPage(p)}>{p}</button>
+                ))}
+                <span className="page-info">{pageStart + 1}–{Math.min(pageStart + PAGE_SIZE, allCases.length)} of {allCases.length}</span>
+                <button className="page-btn" disabled={page === totalPages} onClick={() => store.setCurrentPage(page + 1)}>Next</button>
+              </nav>
+            )}
+          </section>
         )}
+          </div>
+        </div>
       </div>
+
+      <details className="saved-plans planner-library">
+        <summary>Saved plan library</summary>
+        <div className="saved-plans-list">
+          {savedPlans.length === 0 && <p className="saved-plans-empty">No saved plans yet.</p>}
+          {savedPlans.map(p => (
+            <div key={p.id} className="saved-plan-row">
+              <span className="plan-name">{p.name}</span>
+              <span className="plan-meta">{p.caseCount} cases{p.model ? ` · ${p.model}` : ''}{p.createdAt ? ` · ${new Date(p.createdAt).toLocaleDateString()}` : ''}</span>
+              <button type="button" onClick={() => loadPlan(p.id)}>Load</button>
+              <button type="button" className="delete-btn" onClick={() => deletePlan(p.id)}>Delete</button>
+            </div>
+          ))}
+        </div>
+      </details>
 
       {/* Save Modal */}
       {saveModalOpen && (
@@ -867,6 +1138,7 @@ interface CaseCardProps {
   completedData: { jobId: string; job: Job } | null;
   pills: string[];
   citations: string[];
+  startCollapsed: boolean;
   onAccept: (val: string) => void;
   onClearAcceptance: () => void;
   onReset: () => void;
@@ -877,9 +1149,12 @@ interface CaseCardProps {
   initialCommands: string;
 }
 
-function CaseCard({ caseId, globalIndex, testCase, commands, isAccepted, isRunning, runStatusText, runStatusClass, completedData, pills, citations, onAccept, onClearAcceptance, onReset, onRun, onStop, onRefine, onCopy, initialCommands }: CaseCardProps) {
+function CaseCard({ caseId, globalIndex, testCase, commands, isAccepted, isRunning, runStatusText, runStatusClass, completedData, pills, citations, startCollapsed, onAccept, onClearAcceptance, onReset, onRun, onStop, onRefine, onCopy, initialCommands }: CaseCardProps) {
   const [editorValue, setEditorValue] = useState(commands);
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(startCollapsed);
+  const previewText = testCase.objective || testCase.expectedOutcome || testCase.mutation || 'Open to review the draft details and CLI flow.';
+  const visiblePills = pills.slice(0, 2);
+  const hiddenPillCount = Math.max(0, pills.length - visiblePills.length);
 
   // Sync editor when commands change from outside (e.g. initial load, acceptance change)
   useEffect(() => { setEditorValue(commands); }, [commands]);
@@ -892,11 +1167,13 @@ function CaseCard({ caseId, globalIndex, testCase, commands, isAccepted, isRunni
           <div>
             <span className="case-tag">Draft Case {globalIndex + 1}</span>
             <h3>{caseId}</h3>
+            <p className="case-preview">{previewText}</p>
           </div>
         </div>
         <div className="case-pills">
           {isAccepted && <span className="case-pill accepted">Accepted</span>}
-          {pills.map((p, i) => <span key={i} className="case-pill">{p}</span>)}
+          {visiblePills.map((p, i) => <span key={i} className="case-pill">{p}</span>)}
+          {hiddenPillCount > 0 && <span className="case-pill">+{hiddenPillCount} more</span>}
           {collapsed && runStatusText && <span className={`case-pill ${runStatusClass.includes('succeeded') ? 'pass' : runStatusClass.includes('failed') ? 'fail' : ''}`}>{isRunning ? 'Running' : completedData ? (completedData.job.status || '').toLowerCase() : ''}</span>}
         </div>
       </div>

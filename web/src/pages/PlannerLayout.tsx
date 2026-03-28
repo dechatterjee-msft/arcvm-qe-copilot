@@ -10,52 +10,41 @@ export default function PlannerLayout() {
   const [view, setView] = useState<View>('planner');
 
   return (
-    <main className="page page-shell">
-      <header className="planner-head surface">
+    <main className="page page-shell workspace-shell">
+      <header className="planner-head">
         <div className="brand">
+          <span className="section-label">QE Workspace</span>
           <h1>Azure Local QE Copilot</h1>
+          <p className="tagline">Plan scenarios, review drafted CLI flows, and run trusted cases from one workspace.</p>
         </div>
-      </header>
-
-      <div className="workspace-layout">
-        <aside className="surface shell-sidebar">
-          <Link className="home-link" to="/">
+        <nav className="workspace-switcher" aria-label="Workspace views">
+          <Link className="workspace-tab" to="/">
             <Home size={16} />
             Overview
           </Link>
+          <button
+            type="button"
+            className={`workspace-tab${view === 'planner' ? ' active' : ''}`}
+            onClick={() => setView('planner')}
+          >
+            <Pencil size={16} />
+            Planner
+          </button>
+          <button
+            type="button"
+            className={`workspace-tab${view === 'runs' ? ' active' : ''}`}
+            onClick={() => setView('runs')}
+          >
+            <Play size={16} />
+            Runs
+          </button>
+        </nav>
+      </header>
 
-          <div className="sidebar-section-title">Workspace</div>
-          <nav className="app-nav app-nav-vertical">
-            <button
-              type="button"
-              className={`app-nav-btn${view === 'planner' ? ' active' : ''}`}
-              onClick={() => setView('planner')}
-            >
-              <Pencil size={17} />
-              <span className="app-nav-copy">
-                <strong>Planner</strong>
-                <span>Create and refine QE scenarios</span>
-              </span>
-            </button>
-            <button
-              type="button"
-              className={`app-nav-btn${view === 'runs' ? ' active' : ''}`}
-              onClick={() => setView('runs')}
-            >
-              <Play size={17} />
-              <span className="app-nav-copy">
-                <strong>Runs</strong>
-                <span>Inspect execution and logs</span>
-              </span>
-            </button>
-          </nav>
-        </aside>
-
-        <section className="shell-content">
-          {view === 'planner' && <PlannerView />}
-          {view === 'runs' && <RunsView />}
-        </section>
-      </div>
+      <section className="shell-content shell-content-wide">
+        {view === 'planner' && <PlannerView />}
+        {view === 'runs' && <RunsView />}
+      </section>
     </main>
   );
 }
