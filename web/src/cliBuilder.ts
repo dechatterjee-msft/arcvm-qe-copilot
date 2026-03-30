@@ -159,6 +159,8 @@ export function buildRelevantAzCliCommands(runRequest: RunRequest): string[] {
   const lnet = resources.logicalNetwork as Record<string, unknown> | undefined;
   if (lnet) {
     const name = String(lnet.name || '<logical-network-name>');
+    const pools = Array.isArray(lnet.ipPools) ? (lnet.ipPools as { start: string; end: string }[]) : [];
+    const firstPool = pools.length > 0 ? pools[0] : null;
     const create = [
       'az stack-hci-vm network lnet create',
       `  --resource-group ${shellQuote(rg)}`,
@@ -169,13 +171,30 @@ export function buildRelevantAzCliCommands(runRequest: RunRequest): string[] {
     if (lnet.addressPrefix) create.push(`  --address-prefixes ${shellQuote(String(lnet.addressPrefix))}`);
     if (lnet.ipAllocationMethod) create.push(`  --ip-allocation-method ${shellQuote(String(lnet.ipAllocationMethod))}`);
     if (lnet.ipPoolType) create.push(`  --ip-pool-type ${shellQuote(String(lnet.ipPoolType))}`);
-    if (lnet.ipPoolStart) create.push(`  --ip-pool-start ${shellQuote(String(lnet.ipPoolStart))}`);
-    if (lnet.ipPoolEnd) create.push(`  --ip-pool-end ${shellQuote(String(lnet.ipPoolEnd))}`);
+    // Use first pool for create (fall back to legacy top-level fields)
+    const poolStart = firstPool?.start || String(lnet.ipPoolStart || '');
+    const poolEnd = firstPool?.end || String(lnet.ipPoolEnd || '');
+    if (poolStart) create.push(`  --ip-pool-start ${shellQuote(poolStart)}`);
+    if (poolEnd) create.push(`  --ip-pool-end ${shellQuote(poolEnd)}`);
     if (lnet.vmSwitchName) create.push(`  --vm-switch-name ${shellQuote(String(lnet.vmSwitchName))}`);
     if (Array.isArray(lnet.dnsServers) && lnet.dnsServers.length > 0) create.push(`  --dns-servers ${(lnet.dnsServers as string[]).map(shellQuote).join(' ')}`);
     if (lnet.gateway) create.push(`  --gateway ${shellQuote(String(lnet.gateway))}`);
     if (typeof lnet.vlan === 'number' && lnet.vlan > 0) create.push(`  --vlan ${shellQuote(String(lnet.vlan))}`);
     cmdGroups.push({ label: 'Logical Network', create, show: `az stack-hci-vm network lnet show --resource-group ${shellQuote(rg)} --name ${shellQuote(name)}`, del: `az stack-hci-vm network lnet delete --resource-group ${shellQuote(rg)} --name ${shellQuote(name)} --yes` });
+
+    // Additional pools via update commands
+    for (let pi = 1; pi < pools.length; pi++) {
+      const pool = pools[pi];
+      const update = [
+        `# IP Pool ${pi + 1}`,
+        'az stack-hci-vm network lnet update',
+        `  --resource-group ${shellQuote(rg)}`,
+        `  --name ${shellQuote(name)}`,
+        `  --ip-pool-start ${shellQuote(pool.start)}`,
+        `  --ip-pool-end ${shellQuote(pool.end)}`,
+      ];
+      cmdGroups.push({ label: `Logical Network – Pool ${pi + 1}`, create: update, show: '', del: '' });
+    }
   }
 
   // NSG

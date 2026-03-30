@@ -3954,6 +3954,150 @@ body::after {
   font-size: 11px;
   color: var(--text-muted);
 }
+.topo-description {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 0 0 12px 0;
+  line-height: 1.5;
+}
+
+/* LNET editable table */
+.lnet-editor {
+  border: 1px solid rgba(15, 27, 45, 0.1);
+  border-radius: 10px;
+  background: var(--surface-soft);
+  padding: 16px 20px;
+}
+.lnet-editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.lnet-count-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.lnet-count-control label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.lnet-count-control input {
+  width: 60px;
+  font-size: 13px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(15, 27, 45, 0.15);
+  background: var(--bg);
+  color: var(--text-primary);
+}
+.lnet-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.lnet-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.lnet-table th {
+  text-align: left;
+  padding: 6px 8px;
+  font-weight: 700;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  border-bottom: 1px solid rgba(15, 27, 45, 0.1);
+  white-space: nowrap;
+}
+.lnet-table td {
+  padding: 4px 4px;
+  border-bottom: 1px solid rgba(15, 27, 45, 0.05);
+}
+.lnet-table td input {
+  width: 100%;
+  font-size: 12px;
+  padding: 4px 6px;
+  border-radius: 5px;
+  border: 1px solid rgba(15, 27, 45, 0.12);
+  background: var(--bg);
+  color: var(--text-primary);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  box-sizing: border-box;
+}
+.lnet-table td input:focus {
+  outline: none;
+  border-color: var(--blue);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+}
+.lnet-table td input[type="number"] {
+  width: 70px;
+}
+.lnet-row-num {
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 11px;
+  text-align: center;
+  width: 30px;
+}
+.lnet-table tr:hover td {
+  background: rgba(59, 130, 246, 0.04);
+}
+
+/* IP pool sub-rows inside LNET table */
+.ip-pools-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 240px;
+}
+.ip-pool-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.ip-pool-row input {
+  width: 120px;
+}
+.ip-pool-sep {
+  color: var(--text-muted);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.pool-remove-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.pool-remove-btn:hover {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.08);
+}
+.pool-add-btn {
+  background: none;
+  border: 1px dashed var(--border);
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 4px;
+  align-self: flex-start;
+  margin-top: 2px;
+}
+.pool-add-btn:hover {
+  background: rgba(59, 130, 246, 0.06);
+  border-color: var(--accent);
+  color: var(--accent);
+}
 
 .scale-summary-bar {
   display: flex;

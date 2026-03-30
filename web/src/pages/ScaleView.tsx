@@ -5,10 +5,15 @@ import * as api from '../api';
 import { buildScaleCliSummary, buildRelevantAzCliCommands } from '../cliBuilder';
 import {
   generateScaleTestCases,
+  generateDefaultLnets,
+  ipToNum,
+  numToIp,
   SCALE_PRESETS,
   BATCH_SIZES,
   SCALE_RESOURCE_LABELS,
   type ScaleResourceType,
+  type LnetRow,
+  type IPPool,
 } from '../scaleGenerator';
 import FlightRecorder from '../components/FlightRecorder';
 import type { TestCase, Job, RunRequest } from '../types';
@@ -29,6 +34,74 @@ export default function ScaleView() {
   const [scaleCount, setScaleCount] = useState<number>(SCALE_PRESETS[0]);
   const [scaleBatch, setScaleBatch] = useState<number>(BATCH_SIZES[2]);
   const [scalePrefix, setScalePrefix] = useState('qe-scale');
+
+  // Editable LNET rows — used for both LNET mode and NIC prerequisite LNETs
+  const [lnetCount, setLnetCount] = useState(2);
+  const [lnetRows, setLnetRows] = useState<LnetRow[]>(() => generateDefaultLnets(2, 'qe-scale'));
+
+  function regenerateLnets(count: number, prefix: string) {
+    setLnetCount(count);
+    setLnetRows(generateDefaultLnets(count, prefix));
+  }
+
+  function handleCountChange(n: number) {
+    setScaleCount(n);
+    // For LNET mode, count = number of LNETs → regenerate rows
+    if (scaleType === 'lnet') {
+      regenerateLnets(n, scalePrefix);
+    }
+    // For NIC mode, auto-suggest LNET count (~50 NICs per LNET)
+    if (scaleType === 'nic') {
+      const suggested = Math.max(1, Math.ceil(n / 50));
+      regenerateLnets(suggested, scalePrefix);
+    }
+  }
+
+  function handleTypeChange(t: ScaleResourceType) {
+    setScaleType(t);
+    if (t === 'lnet') {
+      regenerateLnets(scaleCount, scalePrefix);
+    } else {
+      const suggested = Math.max(1, Math.ceil(scaleCount / 50));
+      regenerateLnets(suggested, scalePrefix);
+    }
+  }
+
+  function handleLnetCountChange(n: number) {
+    const capped = Math.max(1, Math.min(50, n));
+    regenerateLnets(capped, scalePrefix);
+  }
+
+  function updateLnetRow(idx: number, patch: Partial<LnetRow>) {
+    setLnetRows(prev => prev.map((row, i) => i === idx ? { ...row, ...patch } : row));
+  }
+
+  function updatePool(lnetIdx: number, poolIdx: number, patch: Partial<IPPool>) {
+    setLnetRows(prev => prev.map((row, i) => {
+      if (i !== lnetIdx) return row;
+      const pools = row.ipPools.map((p, pi) => pi === poolIdx ? { ...p, ...patch } : p);
+      return { ...row, ipPools: pools };
+    }));
+  }
+
+  function addPool(lnetIdx: number) {
+    setLnetRows(prev => prev.map((row, i) => {
+      if (i !== lnetIdx) return row;
+      const last = row.ipPools[row.ipPools.length - 1];
+      // Derive next pool range from the last pool's end
+      const lastEndNum = last ? ipToNum(last.end) : ipToNum(row.gateway) + 49;
+      const newStart = numToIp(lastEndNum + 1);
+      const newEnd = numToIp(lastEndNum + 129);
+      return { ...row, ipPools: [...row.ipPools, { start: newStart, end: newEnd }] };
+    }));
+  }
+
+  function removePool(lnetIdx: number, poolIdx: number) {
+    setLnetRows(prev => prev.map((row, i) => {
+      if (i !== lnetIdx || row.ipPools.length <= 1) return row;
+      return { ...row, ipPools: row.ipPools.filter((_, pi) => pi !== poolIdx) };
+    }));
+  }
 
   // Local results state (separate from planner)
   const [scaleCases, setScaleCases] = useState<TestCase[]>([]);
@@ -171,10 +244,10 @@ export default function ScaleView() {
     const { subscriptionId, resourceGroup, location, customLocationId } = store.baseEnvelope;
     const cases = generateScaleTestCases({
       resourceType: scaleType,
-      totalCount: scaleCount,
+      totalCount: scaleType === 'lnet' ? lnetRows.length : scaleCount,
       batchSize: scaleBatch,
       prefix: scalePrefix,
-
+      lnetRows,
     });
 
     const cmds = new Map<string, string>();
@@ -288,8 +361,9 @@ export default function ScaleView() {
 
   /* ─── Derived ────────────────────────────────────────── */
   const contextReady = Boolean(store.baseEnvelope.subscriptionId && store.baseEnvelope.resourceGroup && store.baseEnvelope.customLocationId);
-  const batchCount = Math.ceil(scaleCount / scaleBatch);
-  const batchResourceCount = Math.min(scaleBatch, scaleCount);
+  const effectiveCount = scaleType === 'lnet' ? lnetRows.length : scaleCount;
+  const batchCount = Math.ceil(effectiveCount / scaleBatch);
+  const batchResourceCount = Math.min(scaleBatch, effectiveCount);
 
   return (
     <div className="scale-page">
@@ -326,23 +400,26 @@ export default function ScaleView() {
         <div className="scale-config-body">
           <div className="scale-field">
             <label className="scale-label">Resource type</label>
-            <select className="scale-select" value={scaleType} onChange={e => setScaleType(e.target.value as ScaleResourceType)}>
+            <select className="scale-select" value={scaleType} onChange={e => handleTypeChange(e.target.value as ScaleResourceType)}>
               {(Object.keys(SCALE_RESOURCE_LABELS) as ScaleResourceType[]).map(t => (
                 <option key={t} value={t}>{SCALE_RESOURCE_LABELS[t]}</option>
               ))}
             </select>
           </div>
 
-          <div className="scale-field">
-            <label className="scale-label">Total count</label>
-            <div className="depth-toggle scale-toggle">
-              {SCALE_PRESETS.map(n => (
-                <button key={n} type="button" className={`depth-btn${scaleCount === n ? ' active' : ''}`} onClick={() => setScaleCount(n)}>
-                  {n >= 1000 ? `${n / 1000}K` : n}
-                </button>
-              ))}
+          {/* NIC mode: pick total NIC count */}
+          {scaleType === 'nic' && (
+            <div className="scale-field">
+              <label className="scale-label">Total NICs</label>
+              <div className="depth-toggle scale-toggle">
+                {SCALE_PRESETS.map(n => (
+                  <button key={n} type="button" className={`depth-btn${scaleCount === n ? ' active' : ''}`} onClick={() => handleCountChange(n)}>
+                    {n >= 1000 ? `${n / 1000}K` : n}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
 
           <div className="scale-field">
             <label className="scale-label">Batch size</label>
@@ -367,12 +444,103 @@ export default function ScaleView() {
             />
           </div>
 
+          {/* NIC prerequisites — show LNET count when NIC is selected */}
+          {scaleType === 'nic' && (
+            <div className="scale-topology">
+              <div className="scale-topology-head">
+                <span className="scale-label">Prerequisite LNETs</span>
+                <span className="topo-hint">NICs will be distributed round-robin across these</span>
+              </div>
+            </div>
+          )}
+
+          {/* Editable LNET rows */}
+          <div className="lnet-editor" style={{ gridColumn: '1 / -1' }}>
+            <div className="lnet-editor-head">
+              <span className="scale-label">
+                {scaleType === 'lnet' ? 'Logical Networks' : 'Prerequisite Logical Networks'}
+              </span>
+              <div className="lnet-count-control">
+                <label>Count:</label>
+                <input
+                  type="number" min={1} max={scaleType === 'lnet' ? 1000 : 50}
+                  value={lnetCount}
+                  onChange={e => handleLnetCountChange(+e.target.value)}
+                />
+                <button
+                  type="button"
+                  className="topo-auto-btn"
+                  onClick={() => regenerateLnets(lnetCount, scalePrefix)}
+                  title="Reset all rows to auto-generated defaults"
+                >
+                  Reset
+                </button>
+              </div>
+            </div>
+
+            <div className="lnet-table-wrap">
+              <table className="lnet-table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Name</th>
+                    <th>Subnet</th>
+                    <th>IP Pools</th>
+                    <th>Gateway</th>
+                    <th>DNS</th>
+                    <th>VLAN</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lnetRows.map((row, i) => (
+                    <tr key={i}>
+                      <td className="lnet-row-num">{i + 1}</td>
+                      <td><input value={row.name} onChange={e => updateLnetRow(i, { name: e.target.value })} /></td>
+                      <td><input value={row.addressPrefix} onChange={e => updateLnetRow(i, { addressPrefix: e.target.value })} /></td>
+                      <td className="ip-pools-cell">
+                        {row.ipPools.map((pool, pi) => (
+                          <div key={pi} className="ip-pool-row">
+                            <input
+                              placeholder="Start"
+                              value={pool.start}
+                              onChange={e => updatePool(i, pi, { start: e.target.value })}
+                            />
+                            <span className="ip-pool-sep">–</span>
+                            <input
+                              placeholder="End"
+                              value={pool.end}
+                              onChange={e => updatePool(i, pi, { end: e.target.value })}
+                            />
+                            {row.ipPools.length > 1 && (
+                              <button type="button" className="pool-remove-btn" onClick={() => removePool(i, pi)} title="Remove pool">×</button>
+                            )}
+                          </div>
+                        ))}
+                        <button type="button" className="pool-add-btn" onClick={() => addPool(i)}>+ Pool</button>
+                      </td>
+                      <td><input value={row.gateway} onChange={e => updateLnetRow(i, { gateway: e.target.value })} /></td>
+                      <td><input value={row.dns} onChange={e => updateLnetRow(i, { dns: e.target.value })} /></td>
+                      <td><input type="number" value={row.vlan} onChange={e => updateLnetRow(i, { vlan: +e.target.value })} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
         </div>
 
         <div className="scale-config-footer">
           <div className="scale-summary-bar">
             <span className="scale-summary-item">{SCALE_RESOURCE_LABELS[scaleType]}</span>
-            <span className="scale-summary-item">{scaleCount} total</span>
+            {scaleType === 'lnet' ? (
+              <span className="scale-summary-item">{lnetRows.length} LNET{lnetRows.length !== 1 ? 's' : ''}</span>
+            ) : (
+              <>
+                <span className="scale-summary-item">{scaleCount} NICs</span>
+                <span className="scale-summary-item scale-note">+ {lnetRows.length} LNET{lnetRows.length !== 1 ? 's' : ''} (batch 1)</span>
+              </>
+            )}
             <span className="scale-summary-item">{batchCount} batch{batchCount !== 1 ? 'es' : ''} &times; {batchResourceCount} each</span>
           </div>
           <button type="button" className="primary-btn" onClick={generateScale}>

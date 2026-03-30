@@ -100,6 +100,12 @@ func (c *CLI) EnsureLogicalNetwork(ctx context.Context, req *spec.RunRequest, lo
 		return id, nil
 	}
 
+	pools := logicalNetwork.EffectiveIPPools()
+	firstPool := spec.IPPool{}
+	if len(pools) > 0 {
+		firstPool = pools[0]
+	}
+
 	args := []string{
 		"stack-hci-vm", "network", "lnet", "create",
 		"-g", req.ResourceGroup,
@@ -109,8 +115,8 @@ func (c *CLI) EnsureLogicalNetwork(ctx context.Context, req *spec.RunRequest, lo
 		"--address-prefixes", logicalNetwork.AddressPrefix,
 		"--ip-allocation-method", effectiveIPAllocationMethod(logicalNetwork),
 		"--ip-pool-type", effectiveIPPoolType(logicalNetwork),
-		"--ip-pool-start", logicalNetwork.IPPoolStart,
-		"--ip-pool-end", logicalNetwork.IPPoolEnd,
+		"--ip-pool-start", firstPool.Start,
+		"--ip-pool-end", firstPool.End,
 		"--vm-switch-name", logicalNetwork.VMSwitchName,
 	}
 	args = append(args, c.tagArgs(req.Tags)...)
@@ -136,7 +142,27 @@ func (c *CLI) EnsureLogicalNetwork(ctx context.Context, req *spec.RunRequest, lo
 		return "", err
 	}
 
-	return extractID(raw)
+	id, err := extractID(raw)
+	if err != nil {
+		return "", err
+	}
+
+	// Add additional IP pools via update commands
+	for i := 1; i < len(pools); i++ {
+		pool := pools[i]
+		updateArgs := []string{
+			"stack-hci-vm", "network", "lnet", "update",
+			"-g", req.ResourceGroup,
+			"--name", logicalNetwork.Name,
+			"--ip-pool-start", pool.Start,
+			"--ip-pool-end", pool.End,
+		}
+		if _, err := c.run(ctx, updateArgs...); err != nil {
+			return id, fmt.Errorf("add IP pool %d (%s–%s): %w", i+1, pool.Start, pool.End, err)
+		}
+	}
+
+	return id, nil
 }
 
 func (c *CLI) EnsureNetworkInterface(ctx context.Context, req *spec.RunRequest, networkInterface spec.NetworkInterfaceSpec, networkRef string) (string, error) {

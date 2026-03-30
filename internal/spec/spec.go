@@ -216,12 +216,18 @@ func (r *Resources) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+type IPPool struct {
+	Start string `json:"start"`
+	End   string `json:"end"`
+}
+
 type LogicalNetworkSpec struct {
 	Name                         string   `json:"name"`
 	AddressPrefix                string   `json:"addressPrefix"`
 	IPAllocationMethod           string   `json:"ipAllocationMethod,omitempty"`
 	IPPoolStart                  string   `json:"ipPoolStart"`
 	IPPoolEnd                    string   `json:"ipPoolEnd"`
+	IPPools                      []IPPool `json:"ipPools,omitempty"`
 	IPPoolType                   string   `json:"ipPoolType,omitempty"`
 	Gateway                      string   `json:"gateway,omitempty"`
 	DNSServers                   []string `json:"dnsServers,omitempty"`
@@ -229,6 +235,18 @@ type LogicalNetworkSpec struct {
 	VMSwitchName                 string   `json:"vmSwitchName"`
 	FabricNetworkConfigurationID string   `json:"fabricNetworkConfigurationId,omitempty"`
 	NetworkSecurityGroup         string   `json:"networkSecurityGroup,omitempty"`
+}
+
+// EffectiveIPPools returns the list of IP pools, falling back to the legacy
+// single IPPoolStart/IPPoolEnd fields when IPPools is empty.
+func (l LogicalNetworkSpec) EffectiveIPPools() []IPPool {
+	if len(l.IPPools) > 0 {
+		return l.IPPools
+	}
+	if l.IPPoolStart != "" && l.IPPoolEnd != "" {
+		return []IPPool{{Start: l.IPPoolStart, End: l.IPPoolEnd}}
+	}
+	return nil
 }
 
 type NetworkInterfaceSpec struct {
