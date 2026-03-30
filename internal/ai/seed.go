@@ -14,7 +14,7 @@ func FetchAzureDocsContent(ctx context.Context, url string) (string, string, err
 	return fetchDocumentFromAzureDocs(ctx, AzureDocsSource{URL: url})
 }
 
-// ParseRulesPublic extracts rules from markdown content and returns them as SeedRules.
+// ParseRulesPublic extracts rules from Markdown content and returns them as SeedRules.
 func ParseRulesPublic(markdown, sourceURL, layer string) []SeedRule {
 	rules := parseRulesFromMarkdown(markdown, sourceURL, layer)
 	out := make([]SeedRule, len(rules))

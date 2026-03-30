@@ -39,71 +39,6 @@ async function copyText(text: string): Promise<boolean> {
 
 /* ─── Azure Picker Item ────────────────────────────────── */
 interface PickerItem { value: string; label: string; sub?: string; location?: string }
-interface UploadedFile { name: string; size: number; content: string }
-interface PlannerChatMessage {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  createdAt: string;
-}
-interface PlannerConversationThread {
-  id: string;
-  title: string;
-  createdAt: string;
-  updatedAt: string;
-  messages: PlannerChatMessage[];
-  snapshot: {
-    prompt: string;
-    caseCount: number;
-    selectedResourceTypes: string[];
-    uploadedFiles: UploadedFile[];
-    allCases: TestCase[];
-    model: string;
-  };
-}
-
-const PLANNER_CONVERSATIONS_KEY = 'planner_conversations_v1';
-const PLANNER_ACTIVE_CONVERSATION_KEY = 'planner_active_conversation_v1';
-
-function makeId() {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
-  return `planner-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function buildConversationTitle(prompt: string, messages: PlannerChatMessage[]) {
-  const firstUserMessage = messages.find(message => message.role === 'user')?.content.trim();
-  const source = firstUserMessage || prompt.trim();
-  if (!source) return 'New planner chat';
-  return source.length > 48 ? `${source.slice(0, 48).trim()}...` : source;
-}
-
-function buildConversationPreview(thread: PlannerConversationThread) {
-  const latestMessage = [...thread.messages]
-    .reverse()
-    .find(message => message.role === 'user' || message.role === 'assistant')?.content.trim();
-  const source = latestMessage || thread.snapshot.prompt.trim();
-  if (!source) return 'Start a new planner conversation';
-  return source.length > 92 ? `${source.slice(0, 92).trim()}...` : source;
-}
-
-function createPlannerThread(): PlannerConversationThread {
-  const now = new Date().toISOString();
-  return {
-    id: makeId(),
-    title: 'New planner chat',
-    createdAt: now,
-    updatedAt: now,
-    messages: [],
-    snapshot: {
-      prompt: '',
-      caseCount: 8,
-      selectedResourceTypes: [],
-      uploadedFiles: [],
-      allCases: [],
-      model: '',
-    },
-  };
-}
 
 /* ─── Component ────────────────────────────────────────── */
 export default function PlannerView() {
@@ -120,9 +55,6 @@ export default function PlannerView() {
   const [bulkRunTone, setBulkRunTone] = useState<'running' | 'done' | ''>('');
   const [bulkRunBusy, setBulkRunBusy] = useState(false);
   const [validationError, setValidationError] = useState('');
-  const [plannerThreads, setPlannerThreads] = useState<PlannerConversationThread[]>([]);
-  const [activeThreadId, setActiveThreadId] = useState('');
-  const [chatMessages, setChatMessages] = useState<PlannerChatMessage[]>([]);
 
   // Azure pickers
   const [subItems, setSubItems] = useState<PickerItem[]>([]);
@@ -145,7 +77,6 @@ export default function PlannerView() {
   const pollIntervals = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const threadInitRef = useRef(false);
 
   // Load subscriptions on mount
   useEffect(() => {
@@ -262,13 +193,6 @@ export default function PlannerView() {
     if (!validateAzureTarget()) return;
     const prompt = store.prompt.trim();
     if (!prompt) { store.setStatus('Add a prompt so the planner knows what to target.', 'error'); return; }
-    const userMessage: PlannerChatMessage = {
-      id: makeId(),
-      role: 'user',
-      content: prompt,
-      createdAt: new Date().toISOString(),
-    };
-    setChatMessages(prev => [...prev, userMessage]);
 
     const isRefine = refineTarget !== null;
     const refineCaseId = refineTarget;
@@ -310,12 +234,6 @@ export default function PlannerView() {
           store.setInitialCommand(refineCaseId, cmds);
           store.clearAcceptance(refineCaseId);
           store.setStatus(`Refined ${refineCaseId} in ${elapsedSec}s.`, 'success');
-          setChatMessages(prev => [...prev, {
-            id: makeId(),
-            role: 'assistant',
-            content: `Refined ${refineCaseId} in ${elapsedSec}s.\n\n${replacement.objective || replacement.expectedOutcome || 'Updated the draft case.'}`,
-            createdAt: new Date().toISOString(),
-          }]);
         }
       } else {
         const newCases = data.cases || [];
@@ -338,23 +256,10 @@ export default function PlannerView() {
         });
         setGenInfo([data.model || '', `+${newCases.length} cases (${merged.length} total)`, `${elapsedSec}s`].filter(Boolean));
         store.setStatus(`Generated ${newCases.length} new test cases in ${elapsedSec}s (${merged.length} total).`, 'success');
-        const previewLines = newCases.slice(0, 3).map(tc => `- ${tc.caseId}: ${tc.objective || tc.expectedOutcome || 'Draft case ready for review.'}`);
-        setChatMessages(prev => [...prev, {
-          id: makeId(),
-          role: 'assistant',
-          content: `Generated ${newCases.length} test case${newCases.length === 1 ? '' : 's'} in ${elapsedSec}s.${previewLines.length > 0 ? `\n\n${previewLines.join('\n')}` : ''}`,
-          createdAt: new Date().toISOString(),
-        }]);
       }
     } catch (err: unknown) {
       const errorText = (err as Error)?.message || 'Request failed';
       store.setStatus(errorText, 'error');
-      setChatMessages(prev => [...prev, {
-        id: makeId(),
-        role: 'assistant',
-        content: `Error: ${errorText}`,
-        createdAt: new Date().toISOString(),
-      }]);
     } finally {
       store.setGenerating(false);
     }
@@ -516,113 +421,6 @@ export default function PlannerView() {
     try { await api.deletePlan(id); refreshSavedPlans(); store.setStatus('Plan deleted.', 'success'); } catch { /* */ }
   }
 
-  const restoreThread = useCallback((thread: PlannerConversationThread) => {
-    store.resetPlannerDraft();
-    store.setPrompt(thread.snapshot.prompt || '');
-    store.setCaseCount(thread.snapshot.caseCount || 8);
-    store.setSelectedResourceTypes(thread.snapshot.selectedResourceTypes || []);
-    store.setUploadedFiles(thread.snapshot.uploadedFiles || []);
-    store.setAllCases(thread.snapshot.allCases || []);
-    store.setModel(thread.snapshot.model || '');
-    (thread.snapshot.allCases || []).forEach((tc, index) => {
-      const caseId = tc.caseId || `case-${index + 1}`;
-      store.setInitialCommand(caseId, buildRelevantAzCliCommands(tc.runRequest || {}).join('\n'));
-    });
-    setChatMessages(thread.messages || []);
-    setGenInfo([]);
-    setElapsed('');
-    setRefineTarget(null);
-    setBulkRunStatus('');
-    setBulkRunTone('');
-  }, [store]);
-
-  const persistThreads = useCallback((threads: PlannerConversationThread[], nextActiveId: string) => {
-    if (typeof window === 'undefined') return;
-    window.localStorage.setItem(PLANNER_CONVERSATIONS_KEY, JSON.stringify(threads));
-    window.localStorage.setItem(PLANNER_ACTIVE_CONVERSATION_KEY, nextActiveId);
-  }, []);
-
-  const createNewConversation = useCallback(() => {
-    const thread = createPlannerThread();
-    setPlannerThreads(prev => {
-      const next = [thread, ...prev];
-      persistThreads(next, thread.id);
-      return next;
-    });
-    setActiveThreadId(thread.id);
-    setChatMessages([]);
-    store.resetPlannerDraft();
-    setGenInfo([]);
-    setElapsed('');
-    setRefineTarget(null);
-    setBulkRunStatus('');
-    setBulkRunTone('');
-    store.setStatus('Planner ready. Describe the behavior you want to pressure-test.', 'success');
-    promptRef.current?.focus();
-  }, [persistThreads, store]);
-
-  const selectConversation = useCallback((threadId: string) => {
-    const thread = plannerThreads.find(item => item.id === threadId);
-    if (!thread) return;
-    setActiveThreadId(thread.id);
-    restoreThread(thread);
-    promptRef.current?.focus();
-  }, [plannerThreads, restoreThread]);
-
-  useEffect(() => {
-    if (threadInitRef.current || typeof window === 'undefined') return;
-    threadInitRef.current = true;
-    try {
-      const rawThreads = window.localStorage.getItem(PLANNER_CONVERSATIONS_KEY);
-      const rawActiveId = window.localStorage.getItem(PLANNER_ACTIVE_CONVERSATION_KEY);
-      const parsedThreads = rawThreads ? JSON.parse(rawThreads) as PlannerConversationThread[] : [];
-      if (parsedThreads.length > 0) {
-        const active = parsedThreads.find(thread => thread.id === rawActiveId) || parsedThreads[0];
-        setPlannerThreads(parsedThreads);
-        setActiveThreadId(active.id);
-        restoreThread(active);
-        return;
-      }
-    } catch { /* fallback to blank thread */ }
-    const freshThread = createPlannerThread();
-    setPlannerThreads([freshThread]);
-    setActiveThreadId(freshThread.id);
-    persistThreads([freshThread], freshThread.id);
-  }, [persistThreads, restoreThread]);
-
-  useEffect(() => {
-    if (!threadInitRef.current || !activeThreadId) return;
-    const snapshot = {
-      prompt: store.prompt,
-      caseCount: store.caseCount,
-      selectedResourceTypes: [...store.selectedResourceTypes],
-      uploadedFiles: store.uploadedFiles,
-      allCases: store.allCases,
-      model: store.model,
-    };
-    setPlannerThreads(prev => {
-      const next = prev.map(thread => thread.id === activeThreadId ? {
-        ...thread,
-        title: buildConversationTitle(snapshot.prompt, chatMessages),
-        updatedAt: new Date().toISOString(),
-        messages: chatMessages,
-        snapshot,
-      } : thread).sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-      persistThreads(next, activeThreadId);
-      return next;
-    });
-  }, [
-    activeThreadId,
-    chatMessages,
-    persistThreads,
-    store.allCases,
-    store.caseCount,
-    store.model,
-    store.prompt,
-    store.selectedResourceTypes,
-    store.uploadedFiles,
-  ]);
-
   const addStarterPrompt = useCallback((promptText: string) => {
     const nextPrompt = promptText.trim();
     const currentPrompt = store.prompt.trim();
@@ -668,7 +466,7 @@ export default function PlannerView() {
   const pageStart = (page - 1) * PAGE_SIZE;
   const pageCases = allCases.slice(pageStart, pageStart + PAGE_SIZE);
   const depthLabels: Record<number, string> = { 4: 'Quick', 8: 'Standard', 12: 'Thorough' };
-  const promptDetail = store.prompt.length < 60 ? 'Concise' : store.prompt.length < 180 ? 'Good detail' : 'Detailed';
+  const promptDetail = store.prompt.length < 60 ? 'Brief' : store.prompt.length < 180 ? 'Well scoped' : 'Detailed';
   const resourceSummary = isAllSelected ? 'End-to-end' : selectedResourceTypes.size > 0 ? `${selectedResourceTypes.size} selected` : 'Choose scope';
   const attachmentSummary = store.uploadedFiles.length === 0 ? 'Optional' : `${store.uploadedFiles.length}/${MAX_FILES} attached`;
   const contextReady = Boolean(store.baseEnvelope.subscriptionId && store.baseEnvelope.resourceGroup && store.baseEnvelope.customLocationId);
@@ -677,62 +475,25 @@ export default function PlannerView() {
     ? ['End-to-end coverage']
     : [...selectedResourceTypes].map(type => resourceMeta[type].label.replace(/ \(.*/, ''));
   const plannerSummaryItems = [
-    contextReady ? 'Azure context ready' : `${contextProgress}/3 Azure fields selected`,
-    `Depth ${depthLabels[store.caseCount]}`,
-    selectedResourceLabels.length > 0 ? `Scope ${selectedResourceLabels.join(', ')}` : 'Scope not set',
-    store.uploadedFiles.length > 0 ? `${store.uploadedFiles.length} reference file${store.uploadedFiles.length === 1 ? '' : 's'}` : 'No reference files',
+    contextReady ? 'Azure context loaded' : `${contextProgress}/3 Azure details set`,
+    `${depthLabels[store.caseCount]} depth`,
+    selectedResourceLabels.length > 0 ? `${selectedResourceLabels.join(', ')} scope` : 'Scope not set',
+    store.uploadedFiles.length > 0 ? `${store.uploadedFiles.length} reference file${store.uploadedFiles.length === 1 ? '' : 's'}` : 'No files attached',
   ];
   const plannerOptionSummary = `${depthLabels[store.caseCount]} depth • ${resourceSummary}`;
   const promptMetaItems = [
     `${promptDetail} prompt`,
     `${store.prompt.length} chars`,
-    contextReady ? 'Ready to generate' : 'Azure context required',
+    contextReady ? 'Ready to create' : 'Azure context required',
   ];
   const hasResults = allCases.length > 0 || generating;
   const isPromptEmpty = store.prompt.trim().length === 0;
   const starterPromptChoices = mergedQuickPrompts.filter((qp, index, arr) => arr.findIndex(candidate => candidate.prompt === qp.prompt) === index);
   const resultsMeta = generating && allCases.length === 0 ? 'Generating draft...' : `${allCases.length} cases${elapsed ? ` • ${elapsed}s` : ''}`;
-  const sortedThreads = [...plannerThreads].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-  const visibleThreads = sortedThreads;
-  const activeThread = sortedThreads.find(thread => thread.id === activeThreadId) || null;
 
   return (
     <>
       <div className="planner-page-layout">
-        <aside className="surface planner-chat-pane">
-          <div className="planner-chat-bar">
-            <div className="planner-chat-copy">
-              <span className="section-label">Planner Chats</span>
-              <p>Saved automatically in this browser, so you can come back to the same planning thread.</p>
-            </div>
-            <div className="planner-chat-actions">
-              <button type="button" className="secondary-btn" onClick={createNewConversation}>New Chat</button>
-            </div>
-          </div>
-
-          {visibleThreads.length > 0 && (
-            <div className="planner-thread-list" aria-label="Saved planner conversations">
-              {visibleThreads.map(thread => {
-                const preview = buildConversationPreview(thread);
-                return (
-                  <button
-                    key={thread.id}
-                    type="button"
-                    className={`planner-thread-chip${thread.id === activeThreadId ? ' active' : ''}`}
-                    onClick={() => selectConversation(thread.id)}
-                  >
-                    <div className="planner-thread-meta">
-                      <strong>{thread.title}</strong>
-                      <span>{new Date(thread.updatedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
-                    </div>
-                    <p className="planner-thread-preview">{preview}</p>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </aside>
-
         <div className="planner-main-column">
           <section className="surface context-shell">
             <div className="context-shell-head">
@@ -742,7 +503,7 @@ export default function PlannerView() {
                 <p>Select the Azure scope used by plan generation and execution.</p>
               </div>
               <span className={`context-required${contextReady ? ' ready' : ''}`}>
-                {contextReady ? 'Ready to generate and run' : 'Required before generate or run'}
+                {contextReady ? 'Ready to create and run' : 'Required before create or run'}
               </span>
             </div>
 
@@ -761,12 +522,11 @@ export default function PlannerView() {
         <section className="surface composer">
           <div className="composer-top">
             <div>
-              <span className="section-label">Test Case Generator</span>
-              <h2>Ask the planner for test cases</h2>
-              <p>Write the scenario the way you would brief an operator. Keep the prompt natural, then use scope, depth, and files only where they sharpen the draft.</p>
+              <span className="section-label">Test Case Studio</span>
+              <h2>Turn your scenario into test cases</h2>
+              <p>Describe the scenario as you'd brief an operator. Add scope, depth, or files only when they make the draft clearer.</p>
             </div>
             <div className="planner-summary" aria-label="Planner summary">
-              {activeThread && <span className="planner-summary-item">{activeThread.title}</span>}
               {plannerSummaryItems.map(item => (
                 <span key={item} className="planner-summary-item">{item}</span>
               ))}
@@ -777,28 +537,12 @@ export default function PlannerView() {
             <div className="planner-studio">
               <div className="prompt-shell">
                 <div className="prompt-shell-head">
-                  <div className="prompt-shell-copy">
-                    <div className="prompt-shell-kicker">Planner Prompt</div>
-                    <div className="prompt-shell-title">What should the planner generate?</div>
-                    <p className="prompt-shell-description">Describe the scenario, failure modes, constraints, or success criteria. The planner will turn it into CLI-backed cases you can inspect, edit, and run.</p>
-                    <div className="prompt-shell-meta">
-                      {promptMetaItems.map(item => (
-                        <span key={item} className="prompt-meta-item">{item}</span>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                {chatMessages.length > 0 && (
-                  <div className="planner-chat-log" aria-label="Planner conversation">
-                    {chatMessages.map(message => (
-                      <article key={message.id} className={`planner-chat-message ${message.role}`}>
-                        <span className="planner-chat-role">{message.role === 'user' ? 'You' : 'Planner'}</span>
-                        <p>{message.content}</p>
-                      </article>
+                  <div className="prompt-shell-meta">
+                    {promptMetaItems.map(item => (
+                      <span key={item} className="prompt-meta-item">{item}</span>
                     ))}
                   </div>
-                )}
+                </div>
 
                 <textarea
                   id="prompt"

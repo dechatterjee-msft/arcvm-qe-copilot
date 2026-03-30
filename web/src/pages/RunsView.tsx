@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import Markdown from 'react-markdown';
-import { FileText, Info, Send } from 'lucide-react';
+import { FileText, Info, Send, AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react';
 import { useRunsStore } from '../store';
 import * as api from '../api';
 import FlightRecorder from '../components/FlightRecorder';
@@ -55,10 +55,71 @@ export default function RunsView() {
   const [logResourceFilter, setLogResourceFilter] = useState('');
   const [logEntriesLoading, setLogEntriesLoading] = useState(false);
 
+  // Error diagnosis state (LLM-sugared)
+  const diagnosisCacheRef = useRef<Map<string, string>>(new Map());
+  const [diagnosis, setDiagnosis] = useState<string | null>(null);
+  const [diagnosisLoading, setDiagnosisLoading] = useState(false);
+  const [rawErrorExpanded, setRawErrorExpanded] = useState(false);
+
   // Fetch operator registry on mount (static list, no cluster needed)
   useEffect(() => {
     api.listOperators().then(ops => { if (Array.isArray(ops)) setAllOperators(ops); }).catch(() => {});
   }, []);
+
+  // Auto-diagnose errors when a failed job is selected
+  useEffect(() => {
+    const job = store.selectedJob;
+    const jobId = store.selectedJobId;
+    if (!job || !jobId || !job.error) {
+      setDiagnosis(null);
+      setRawErrorExpanded(false);
+      return;
+    }
+    const st = (job.status || '').toLowerCase();
+    if (st === 'succeeded' || st === 'completed') {
+      setDiagnosis(null);
+      return;
+    }
+    // Check cache
+    const cached = diagnosisCacheRef.current.get(jobId);
+    if (cached) {
+      setDiagnosis(cached);
+      return;
+    }
+    // Request LLM diagnosis
+    setDiagnosis(null);
+    setDiagnosisLoading(true);
+    const systemPrompt = [
+      'You are an expert Azure Local QE diagnostic assistant.',
+      'The user ran a test case and it failed. Analyze the error and provide:',
+      '1. A clear, concise summary of what went wrong (1-2 sentences)',
+      '2. The likely root cause',
+      '3. Suggested fix or next steps',
+      '',
+      'Format your response in markdown. Be concise and actionable.',
+      `Job ID: ${jobId}`,
+      job.caseId ? `Test Case: ${job.caseId}` : '',
+      job.description ? `Description: ${job.description}` : '',
+      job.type ? `Type: ${job.type}` : '',
+      job.summary?.resourceKinds?.length ? `Resources: ${job.summary.resourceKinds.join(', ')}` : '',
+    ].filter(Boolean).join('\n');
+
+    const messages: ChatMessage[] = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: `This test case failed with the following error:\n\n\`\`\`\n${job.error}\n\`\`\`\n\nPlease diagnose and explain what happened and how to fix it.` },
+    ];
+    api.sendChatMessage(messages)
+      .then(({ reply }) => {
+        diagnosisCacheRef.current.set(jobId, reply);
+        // Only apply if still viewing the same job
+        if (store.selectedJobId === jobId) setDiagnosis(reply);
+      })
+      .catch(() => {
+        const fallback = '> Unable to generate diagnosis — AI planner may not be configured.';
+        if (store.selectedJobId === jobId) setDiagnosis(fallback);
+      })
+      .finally(() => setDiagnosisLoading(false));
+  }, [store.selectedJobId, store.selectedJob?.error]);
 
   // Fetch job list on mount + poll every 3s
   const refreshList = useCallback(async () => {
@@ -264,7 +325,39 @@ export default function RunsView() {
             </dl>
 
             {selectedJob.error && st !== 'succeeded' && st !== 'completed' && (
-              <div className="run-detail-error">{selectedJob.error}</div>
+              <div className="error-diagnosis-panel">
+                <div className="error-diagnosis-header">
+                  <AlertTriangle size={16} />
+                  <span>Error Diagnosis</span>
+                </div>
+
+                {diagnosisLoading ? (
+                  <div className="error-diagnosis-body loading">
+                    <span className="typing-dots">
+                      <span className="typing-dot" />
+                      <span className="typing-dot" />
+                      <span className="typing-dot" />
+                    </span>
+                    <span>Analyzing failure...</span>
+                  </div>
+                ) : diagnosis ? (
+                  <div className="error-diagnosis-body">
+                    <Markdown>{diagnosis}</Markdown>
+                  </div>
+                ) : null}
+
+                <button
+                  type="button"
+                  className="raw-error-toggle"
+                  onClick={() => setRawErrorExpanded(!rawErrorExpanded)}
+                >
+                  {rawErrorExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                  <span>Raw Error</span>
+                </button>
+                {rawErrorExpanded && (
+                  <pre className="raw-error-content">{selectedJob.error}</pre>
+                )}
+              </div>
             )}
 
             {selectedJobId && (

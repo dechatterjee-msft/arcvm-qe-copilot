@@ -431,9 +431,11 @@ func (f *FlexInt) UnmarshalJSON(b []byte) error {
 		return nil
 	}
 	n, err := strconv.Atoi(s)
-	if err != nil {
-		return fmt.Errorf("vlan: cannot parse %q as int: %w", s, err)
+	if err == nil {
+		*f = FlexInt(n)
+		return nil
 	}
-	*f = FlexInt(n)
+	// LLM may return word-form numbers ("TwoHundred"); treat as 0.
+	*f = 0
 	return nil
 }

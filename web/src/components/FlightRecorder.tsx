@@ -65,16 +65,6 @@ export default function FlightRecorder({ jobId, job, showEmpty, style }: FlightR
           finishedAt: job.finishedAt,
         });
       }
-      if (actions.length === 0 && job.error) {
-        actions.push({
-          name: 'setup',
-          success: false,
-          error: job.error,
-          steps: [],
-          startedAt: job.startedAt,
-          finishedAt: job.finishedAt,
-        });
-      }
     }
     return actions;
   }, [job, isLive, jobSuccess]);
@@ -188,14 +178,6 @@ export default function FlightRecorder({ jobId, job, showEmpty, style }: FlightR
                       </div>
                     );
                   })}
-                  {action.error && !action.success && (
-                    <div className="fr-step fr-step-error">
-                      <div className="fr-step-head">
-                        <span className="fr-step-indicator fail" />
-                        <span className="fr-step-cmd fr-step-cmd-error">Error: {action.error}</span>
-                      </div>
-                    </div>
-                  )}
                 </div>
               </div>
             );
