@@ -231,6 +231,42 @@ func (h *Harness) provisionResources(ctx context.Context, req *spec.RunRequest) 
 		NetworkInterfaces: map[string]string{},
 	}
 
+	// Storage paths
+	for _, sp := range req.Resources.AllStoragePaths() {
+		if _, err := h.cli.EnsureStoragePath(ctx, req, sp); err != nil {
+			return spec.ResourceIDs{}, fmt.Errorf("ensure storage path %q: %w", sp.Name, err)
+		}
+	}
+
+	// Storage containers
+	for _, sc := range req.Resources.AllStorageContainers() {
+		if _, err := h.cli.EnsureStorageContainer(ctx, req, sc); err != nil {
+			return spec.ResourceIDs{}, fmt.Errorf("ensure storage container %q: %w", sc.Name, err)
+		}
+	}
+
+	// Gallery images
+	for _, gi := range req.Resources.AllGalleryImages() {
+		if _, err := h.cli.EnsureGalleryImage(ctx, req, gi); err != nil {
+			return spec.ResourceIDs{}, fmt.Errorf("ensure gallery image %q: %w", gi.Name, err)
+		}
+	}
+
+	// Virtual hard disks
+	for _, vhd := range req.Resources.AllVirtualHardDisks() {
+		if _, err := h.cli.EnsureVirtualHardDisk(ctx, req, vhd); err != nil {
+			return spec.ResourceIDs{}, fmt.Errorf("ensure virtual hard disk %q: %w", vhd.Name, err)
+		}
+	}
+
+	// NSGs
+	for _, nsg := range req.Resources.AllNetworkSecurityGroups() {
+		if _, err := h.cli.EnsureNetworkSecurityGroup(ctx, req, nsg); err != nil {
+			return spec.ResourceIDs{}, fmt.Errorf("ensure network security group %q: %w", nsg.Name, err)
+		}
+	}
+
+	// Logical networks
 	for _, logicalNetwork := range req.Resources.AllLogicalNetworks() {
 		lnetID, err := h.cli.EnsureLogicalNetwork(ctx, req, logicalNetwork)
 		if err != nil {
@@ -239,6 +275,7 @@ func (h *Harness) provisionResources(ctx context.Context, req *spec.RunRequest) 
 		ids.LogicalNetworks[logicalNetwork.Name] = lnetID
 	}
 
+	// Network interfaces
 	for _, networkInterface := range req.Resources.AllNetworkInterfaces() {
 		networkRef, err := resolveNetworkRef(req, networkInterface, ids.LogicalNetworks)
 		if err != nil {
@@ -249,6 +286,13 @@ func (h *Harness) provisionResources(ctx context.Context, req *spec.RunRequest) 
 			return spec.ResourceIDs{}, fmt.Errorf("ensure network interface %q: %w", networkInterface.Name, err)
 		}
 		ids.NetworkInterfaces[networkInterface.Name] = nicID
+	}
+
+	// Virtual machines (last — depends on NICs)
+	for _, vm := range req.Resources.AllVirtualMachines() {
+		if _, err := h.cli.EnsureVirtualMachine(ctx, req, vm, ids.NetworkInterfaces); err != nil {
+			return spec.ResourceIDs{}, fmt.Errorf("ensure virtual machine %q: %w", vm.Name, err)
+		}
 	}
 
 	return ids, nil

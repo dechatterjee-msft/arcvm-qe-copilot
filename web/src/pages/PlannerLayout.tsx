@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { Home, Pencil, Play } from 'lucide-react';
+import { Home, Pencil, Play, Layers } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import PlannerView from './PlannerView';
 import RunsView from './RunsView';
+import ScaleView from './ScaleView';
 
-type View = 'planner' | 'runs';
+type View = 'planner' | 'runs' | 'scale';
 
 export default function PlannerLayout() {
   const [view, setView] = useState<View>('planner');
@@ -32,6 +33,14 @@ export default function PlannerLayout() {
           </button>
           <button
             type="button"
+            className={`workspace-tab${view === 'scale' ? ' active' : ''}`}
+            onClick={() => setView('scale')}
+          >
+            <Layers size={16} />
+            Scale
+          </button>
+          <button
+            type="button"
             className={`workspace-tab${view === 'runs' ? ' active' : ''}`}
             onClick={() => setView('runs')}
           >
@@ -43,6 +52,7 @@ export default function PlannerLayout() {
 
       <section className="shell-content shell-content-wide">
         {view === 'planner' && <PlannerView />}
+        {view === 'scale' && <ScaleView />}
         {view === 'runs' && <RunsView />}
       </section>
     </main>

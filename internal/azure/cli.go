@@ -181,6 +181,200 @@ func (c *CLI) EnsureNetworkInterface(ctx context.Context, req *spec.RunRequest, 
 	return extractID(raw)
 }
 
+func (c *CLI) EnsureNetworkSecurityGroup(ctx context.Context, req *spec.RunRequest, nsg spec.NetworkSecurityGroupSpec) (string, error) {
+	if id, found, err := c.showResourceID(ctx, "stack-hci-vm", "network", "nsg", "show", "-g", req.ResourceGroup, "--name", nsg.Name); err != nil {
+		return "", err
+	} else if found {
+		return id, nil
+	}
+
+	args := []string{
+		"stack-hci-vm", "network", "nsg", "create",
+		"-g", req.ResourceGroup,
+		"--custom-location", req.CustomLocationID,
+		"--name", nsg.Name,
+		"--location", req.Location,
+	}
+	args = append(args, c.tagArgs(req.Tags)...)
+
+	raw, err := c.run(ctx, args...)
+	if err != nil {
+		return "", err
+	}
+
+	return extractID(raw)
+}
+
+func (c *CLI) EnsureStoragePath(ctx context.Context, req *spec.RunRequest, sp spec.StoragePathSpec) (string, error) {
+	if id, found, err := c.showResourceID(ctx, "stack-hci", "storagepath", "show", "-g", req.ResourceGroup, "--name", sp.Name); err != nil {
+		return "", err
+	} else if found {
+		return id, nil
+	}
+
+	args := []string{
+		"stack-hci", "storagepath", "create",
+		"-g", req.ResourceGroup,
+		"--custom-location", req.CustomLocationID,
+		"--name", sp.Name,
+		"--location", req.Location,
+		"--path", sp.Path,
+	}
+	args = append(args, c.tagArgs(req.Tags)...)
+
+	raw, err := c.run(ctx, args...)
+	if err != nil {
+		return "", err
+	}
+
+	return extractID(raw)
+}
+
+func (c *CLI) EnsureVirtualHardDisk(ctx context.Context, req *spec.RunRequest, vhd spec.VirtualHardDiskSpec) (string, error) {
+	if id, found, err := c.showResourceID(ctx, "stack-hci-vm", "vhd", "show", "-g", req.ResourceGroup, "--name", vhd.Name); err != nil {
+		return "", err
+	} else if found {
+		return id, nil
+	}
+
+	args := []string{
+		"stack-hci-vm", "vhd", "create",
+		"-g", req.ResourceGroup,
+		"--custom-location", req.CustomLocationID,
+		"--name", vhd.Name,
+		"--location", req.Location,
+	}
+	if vhd.SizeGB > 0 {
+		args = append(args, "--size-gb", fmt.Sprintf("%d", vhd.SizeGB))
+	}
+	if vhd.DiskFileFormat != "" {
+		args = append(args, "--disk-file-format", vhd.DiskFileFormat)
+	}
+	if vhd.StoragePathRef != "" {
+		args = append(args, "--storage-path-id", vhd.StoragePathRef)
+	}
+	args = append(args, c.tagArgs(req.Tags)...)
+
+	raw, err := c.run(ctx, args...)
+	if err != nil {
+		return "", err
+	}
+
+	return extractID(raw)
+}
+
+func (c *CLI) EnsureGalleryImage(ctx context.Context, req *spec.RunRequest, gi spec.GalleryImageSpec) (string, error) {
+	if id, found, err := c.showResourceID(ctx, "stack-hci-vm", "image", "show", "-g", req.ResourceGroup, "--name", gi.Name); err != nil {
+		return "", err
+	} else if found {
+		return id, nil
+	}
+
+	args := []string{
+		"stack-hci-vm", "image", "create",
+		"-g", req.ResourceGroup,
+		"--custom-location", req.CustomLocationID,
+		"--name", gi.Name,
+		"--location", req.Location,
+	}
+	if gi.ImagePath != "" {
+		args = append(args, "--image-path", gi.ImagePath)
+	}
+	if gi.OSType != "" {
+		args = append(args, "--os-type", gi.OSType)
+	}
+	if gi.HyperVGeneration != "" {
+		args = append(args, "--hyper-v-generation", gi.HyperVGeneration)
+	}
+	args = append(args, c.tagArgs(req.Tags)...)
+
+	raw, err := c.run(ctx, args...)
+	if err != nil {
+		return "", err
+	}
+
+	return extractID(raw)
+}
+
+func (c *CLI) EnsureStorageContainer(ctx context.Context, req *spec.RunRequest, sc spec.StorageContainerSpec) (string, error) {
+	if id, found, err := c.showResourceID(ctx, "stack-hci", "storagepath", "show", "-g", req.ResourceGroup, "--name", sc.Name); err != nil {
+		return "", err
+	} else if found {
+		return id, nil
+	}
+
+	args := []string{
+		"stack-hci", "storagepath", "create",
+		"-g", req.ResourceGroup,
+		"--custom-location", req.CustomLocationID,
+		"--name", sc.Name,
+		"--location", req.Location,
+	}
+	if sc.Path != "" {
+		args = append(args, "--path", sc.Path)
+	}
+	args = append(args, c.tagArgs(req.Tags)...)
+
+	raw, err := c.run(ctx, args...)
+	if err != nil {
+		return "", err
+	}
+
+	return extractID(raw)
+}
+
+func (c *CLI) EnsureVirtualMachine(ctx context.Context, req *spec.RunRequest, vm spec.VirtualMachineSpec, nicIDs map[string]string) (string, error) {
+	if id, found, err := c.showResourceID(ctx, "stack-hci-vm", "show", "-g", req.ResourceGroup, "--name", vm.Name); err != nil {
+		return "", err
+	} else if found {
+		return id, nil
+	}
+
+	args := []string{
+		"stack-hci-vm", "create",
+		"-g", req.ResourceGroup,
+		"--custom-location", req.CustomLocationID,
+		"--name", vm.Name,
+		"--location", req.Location,
+	}
+	if vm.ImageRef != "" {
+		args = append(args, "--image", vm.ImageRef)
+	}
+	if vm.VCPUs > 0 {
+		args = append(args, "--processor-count", fmt.Sprintf("%d", vm.VCPUs))
+	}
+	if vm.MemoryMB > 0 {
+		args = append(args, "--memory-mb", fmt.Sprintf("%d", vm.MemoryMB))
+	}
+	if vm.OSType != "" {
+		args = append(args, "--os-type", vm.OSType)
+	}
+	if vm.AdminUsername != "" {
+		args = append(args, "--admin-username", vm.AdminUsername)
+	}
+	if vm.SSHPublicKeyPath != "" {
+		args = append(args, "--ssh-key-values", vm.SSHPublicKeyPath)
+	}
+	if vm.StoragePathRef != "" {
+		args = append(args, "--storage-path-id", vm.StoragePathRef)
+	}
+	for _, ref := range vm.NetworkRefs {
+		nicID := ref
+		if resolved, ok := nicIDs[ref]; ok {
+			nicID = resolved
+		}
+		args = append(args, "--nic-id", nicID)
+	}
+	args = append(args, c.tagArgs(req.Tags)...)
+
+	raw, err := c.run(ctx, args...)
+	if err != nil {
+		return "", err
+	}
+
+	return extractID(raw)
+}
+
 func (c *CLI) ShowResources(ctx context.Context, req *spec.RunRequest) (spec.ResourceIDs, error) {
 	ids := spec.ResourceIDs{
 		LogicalNetworks:   map[string]string{},
@@ -212,6 +406,15 @@ func (c *CLI) ShowResources(ctx context.Context, req *spec.RunRequest) (spec.Res
 }
 
 func (c *CLI) CleanupResources(ctx context.Context, req *spec.RunRequest) error {
+	// Reverse dependency order: VMs → NICs → VHDs → LNETs → NSGs → StoragePaths → StorageContainers → Gallery Images
+	for _, vm := range req.Resources.AllVirtualMachines() {
+		if err := c.deleteIfPresent(ctx,
+			[]string{"stack-hci-vm", "show", "-g", req.ResourceGroup, "--name", vm.Name},
+			[]string{"stack-hci-vm", "delete", "-g", req.ResourceGroup, "--name", vm.Name, "--yes"},
+		); err != nil {
+			return err
+		}
+	}
 	for _, networkInterface := range req.Resources.AllNetworkInterfaces() {
 		if err := c.deleteIfPresent(ctx,
 			[]string{"stack-hci-vm", "network", "nic", "show", "-g", req.ResourceGroup, "--name", networkInterface.Name},
@@ -220,10 +423,50 @@ func (c *CLI) CleanupResources(ctx context.Context, req *spec.RunRequest) error 
 			return err
 		}
 	}
+	for _, vhd := range req.Resources.AllVirtualHardDisks() {
+		if err := c.deleteIfPresent(ctx,
+			[]string{"stack-hci-vm", "vhd", "show", "-g", req.ResourceGroup, "--name", vhd.Name},
+			[]string{"stack-hci-vm", "vhd", "delete", "-g", req.ResourceGroup, "--name", vhd.Name, "--yes"},
+		); err != nil {
+			return err
+		}
+	}
 	for _, logicalNetwork := range req.Resources.AllLogicalNetworks() {
 		if err := c.deleteIfPresent(ctx,
 			[]string{"stack-hci-vm", "network", "lnet", "show", "-g", req.ResourceGroup, "--name", logicalNetwork.Name},
 			[]string{"stack-hci-vm", "network", "lnet", "delete", "-g", req.ResourceGroup, "--name", logicalNetwork.Name, "--yes"},
+		); err != nil {
+			return err
+		}
+	}
+	for _, nsg := range req.Resources.AllNetworkSecurityGroups() {
+		if err := c.deleteIfPresent(ctx,
+			[]string{"stack-hci-vm", "network", "nsg", "show", "-g", req.ResourceGroup, "--name", nsg.Name},
+			[]string{"stack-hci-vm", "network", "nsg", "delete", "-g", req.ResourceGroup, "--name", nsg.Name, "--yes"},
+		); err != nil {
+			return err
+		}
+	}
+	for _, sp := range req.Resources.AllStoragePaths() {
+		if err := c.deleteIfPresent(ctx,
+			[]string{"stack-hci", "storagepath", "show", "-g", req.ResourceGroup, "--name", sp.Name},
+			[]string{"stack-hci", "storagepath", "delete", "-g", req.ResourceGroup, "--name", sp.Name, "--yes"},
+		); err != nil {
+			return err
+		}
+	}
+	for _, sc := range req.Resources.AllStorageContainers() {
+		if err := c.deleteIfPresent(ctx,
+			[]string{"stack-hci", "storagepath", "show", "-g", req.ResourceGroup, "--name", sc.Name},
+			[]string{"stack-hci", "storagepath", "delete", "-g", req.ResourceGroup, "--name", sc.Name, "--yes"},
+		); err != nil {
+			return err
+		}
+	}
+	for _, gi := range req.Resources.AllGalleryImages() {
+		if err := c.deleteIfPresent(ctx,
+			[]string{"stack-hci-vm", "image", "show", "-g", req.ResourceGroup, "--name", gi.Name},
+			[]string{"stack-hci-vm", "image", "delete", "-g", req.ResourceGroup, "--name", gi.Name, "--yes"},
 		); err != nil {
 			return err
 		}

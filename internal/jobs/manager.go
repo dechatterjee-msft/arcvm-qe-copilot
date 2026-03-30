@@ -342,11 +342,26 @@ func resourceKinds(request *spec.RunRequest) []string {
 	if len(request.Resources.AllNetworkInterfaces()) > 0 {
 		kinds = append(kinds, "networkInterface")
 	}
-	if request.Resources.NetworkSecurityGroup != nil {
+	if len(request.Resources.AllNetworkSecurityGroups()) > 0 {
 		kinds = append(kinds, "networkSecurityGroup")
 	}
 	if len(request.Resources.AllNetworkSecurityRules()) > 0 {
 		kinds = append(kinds, "networkSecurityRule")
+	}
+	if len(request.Resources.AllStoragePaths()) > 0 {
+		kinds = append(kinds, "storagePath")
+	}
+	if len(request.Resources.AllVirtualHardDisks()) > 0 {
+		kinds = append(kinds, "virtualHardDisk")
+	}
+	if len(request.Resources.AllVirtualMachines()) > 0 {
+		kinds = append(kinds, "virtualMachine")
+	}
+	if len(request.Resources.AllStorageContainers()) > 0 {
+		kinds = append(kinds, "storageContainer")
+	}
+	if len(request.Resources.AllGalleryImages()) > 0 {
+		kinds = append(kinds, "galleryImage")
 	}
 	return kinds
 }

@@ -320,10 +320,85 @@ export function extractResourcePills(runRequest: RunRequest): string[] {
   const resources = runRequest?.resources || {};
   for (const [type, spec] of Object.entries(resources)) {
     if (!spec || typeof spec !== 'object') continue;
-    const s = spec as Record<string, unknown>;
-    if (s.name) pills.push(String(s.name));
-    if (s.addressPrefix) pills.push(String(s.addressPrefix));
-    if (pills.length === 0) pills.push(type);
+    if (Array.isArray(spec)) {
+      pills.push(`${spec.length} ${type}`);
+    } else {
+      const s = spec as Record<string, unknown>;
+      if (s.name) pills.push(String(s.name));
+      else if (s.addressPrefix) pills.push(String(s.addressPrefix));
+      else pills.push(type);
+    }
+    if (pills.length >= 3) break;
   }
   return pills;
+}
+
+/* ─── Scale CLI summary (one template per resource type) ── */
+
+const RESOURCE_TYPE_CLI: Record<string, { group: string[]; label: string }> = {
+  logicalNetworks:      { group: ['stack-hci-vm', 'network', 'lnet'], label: 'Logical Network' },
+  networkInterfaces:    { group: ['stack-hci-vm', 'network', 'nic'],  label: 'Network Interface' },
+  networkSecurityGroups:{ group: ['stack-hci-vm', 'network', 'nsg'],  label: 'Network Security Group' },
+  networkSecurityRules: { group: ['stack-hci-vm', 'network', 'nsg', 'rule'], label: 'Network Security Rule' },
+  storagePaths:         { group: ['stack-hci', 'storagepath'],       label: 'Storage Path' },
+  virtualHardDisks:     { group: ['stack-hci-vm', 'vhd'],           label: 'Virtual Hard Disk' },
+  storageContainers:    { group: ['stack-hci', 'storagepath'],       label: 'Storage Container' },
+  galleryImages:        { group: ['stack-hci-vm', 'image'],          label: 'Gallery Image' },
+  virtualMachines:      { group: ['stack-hci-vm', 'create'],         label: 'Virtual Machine' },
+};
+
+export function buildScaleCliSummary(runRequest: RunRequest): string {
+  const rg = runRequest?.resourceGroup || '<resource-group>';
+  const cl = runRequest?.customLocationId || '<custom-location-id>';
+  const location = runRequest?.location || '<location>';
+  const resources = runRequest?.resources || {};
+  const sections: string[] = [];
+
+  for (const [key, value] of Object.entries(resources)) {
+    if (!value || typeof value !== 'object') continue;
+
+    const items = Array.isArray(value) ? value : [value];
+    if (items.length === 0) continue;
+
+    const meta = RESOURCE_TYPE_CLI[key];
+    const label = meta?.label || key;
+    const count = items.length;
+    const first = items[0] as Record<string, unknown>;
+    const last = items[items.length - 1] as Record<string, unknown>;
+    const firstName = String(first.name || '???');
+    const lastName = String(last.name || '???');
+
+    sections.push(`# ${label} — ${count} resource${count !== 1 ? 's' : ''} (${firstName} .. ${lastName})`);
+
+    if (meta) {
+      const cmdBase = `az ${meta.group.join(' ')} create`;
+      const cmdParts = [
+        cmdBase,
+        `  --resource-group ${shellQuote(rg)}`,
+        `  --custom-location ${shellQuote(cl)}`,
+        `  --location ${shellQuote(location)}`,
+        `  --name ${shellQuote('<' + firstName.replace(/\d{3,}$/, '{0001..' + String(count).padStart(4, '0') + '}') + '>')}`,
+      ];
+
+      // Show key fields from the first item as example
+      for (const [fk, fv] of Object.entries(first)) {
+        if (fk === 'name' || fk === '_resourceType') continue;
+        if (fv === undefined || fv === null || fv === '') continue;
+        const flag = `--${fk.replace(/([A-Z])/g, '-$1').toLowerCase()}`;
+        if (Array.isArray(fv)) {
+          cmdParts.push(`  ${flag} ${fv.map(v => shellQuote(String(v))).join(' ')}`);
+        } else {
+          cmdParts.push(`  ${flag} ${shellQuote(String(fv))}`);
+        }
+      }
+
+      sections.push(cmdParts.map((l, i) => i < cmdParts.length - 1 ? l + ' \\' : l).join('\n'));
+    }
+
+    sections.push(`# Backend will execute the above for all ${count} resources in this batch`);
+    sections.push('');
+  }
+
+  while (sections.length > 0 && sections[sections.length - 1] === '') sections.pop();
+  return sections.length > 0 ? sections.join('\n') : '# Scale test — resources defined in JSON payload';
 }
